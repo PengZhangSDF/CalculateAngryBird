@@ -11,6 +11,8 @@
 #include "Config.hpp"
 #include "Material.hpp"
 #include "LevelEditor.hpp"
+#include "AIController.hpp"
+#include "Logger.hpp"
 
 namespace {
 sf::Vector2f clampVec(const sf::Vector2f& v, float maxLen) {
@@ -26,6 +28,10 @@ Game::Game()
       physics_({0.f, config::kGravity}),
       scoreSystem_(font_),
       popups_(font_) {
+    // 初始化日志系统
+    Logger::getInstance().init("last_run.log");
+    Logger::getInstance().info("游戏启动");
+    
     window_.setFramerateLimit(60);
     // Try to load fonts in order, with better error reporting
     bool fontLoaded = false;
@@ -62,10 +68,18 @@ Game::Game()
     
     initAudio();
     initButtons();
+    
+    // 初始化AI控制器
+    aiController_ = std::make_unique<AIController>();
+    aiController_->setGame(this);
+    
     loadLevel(levelIndex_);
 }
 
-Game::~Game() = default;  // Destructor defined here so LevelEditor is complete type
+Game::~Game() {
+    Logger::getInstance().info("游戏关闭");
+    Logger::getInstance().close();
+}
 
 void Game::run() {
     sf::Clock clock;
@@ -90,17 +104,31 @@ void Game::processEvents() {
     }
     prevTPressed = tPressed;
     
+    // Track A key for AI mode toggle
+    bool aPressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A);
+    if (scene_ == Scene::Playing && aPressed && !prevAPressed_) {
+        aiModeEnabled_ = !aiModeEnabled_;
+        if (aiController_) {
+            aiController_->setEnabled(aiModeEnabled_);
+        }
+        Logger::getInstance().info("AI模式切换: " + std::string(aiModeEnabled_ ? "开启" : "关闭"));
+        std::cerr << "AI Mode: " << (aiModeEnabled_ ? "ON" : "OFF") << "\n";
+    }
+    prevAPressed_ = aPressed;
+    
     while (auto event = window_.pollEvent()) {
         if (event->is<sf::Event::Closed>()) window_.close();
         
         // Handle ESC key for pause (only when just pressed, not held)
         if (scene_ == Scene::Playing && escPressed_ && !prevEscPressed_) {
             scene_ = Scene::Paused;
+            Logger::getInstance().info("场景切换: Playing -> Paused");
         }
         
         // Handle ESC key to return from LevelEditor to main menu
         if (scene_ == Scene::LevelEditor && escPressed_ && !prevEscPressed_) {
             scene_ = Scene::MainMenu;
+            Logger::getInstance().info("场景切换: LevelEditor -> MainMenu");
         }
         
         // Handle skill activation - unified event handling
@@ -121,7 +149,10 @@ void Game::update(float dt) {
     switch (scene_) {
         case Scene::Splash:
             splashTimer_ -= dt;
-            if (splashTimer_ <= 0) scene_ = Scene::MainMenu;
+            if (splashTimer_ <= 0) {
+                scene_ = Scene::MainMenu;
+                Logger::getInstance().info("场景切换: Splash -> MainMenu");
+            }
             break;
         case Scene::MainMenu:
         case Scene::LevelSelect:
@@ -130,12 +161,42 @@ void Game::update(float dt) {
         case Scene::Playing: {
             gameTime_ += dt;
             
+            // Update buttons first (to detect clicks before bird launching)
+            updateButtons(dt);
+            
+            // Check if any button was clicked (if so, don't process bird launching)
+            bool buttonClicked = false;
+            for (const auto& btn : gameButtons_) {
+                if (btn->isPressed()) {
+                    buttonClicked = true;
+                    break;
+                }
+            }
+            
             // Update launch state machine
             updateLaunchState(dt);
             
-            // Handle bird launching input
+            // Update AI controller
+            if (aiController_ && aiModeEnabled_) {
+                updateAI(dt);
+                handleAIControl(dt);
+            }
+            
+            // Handle bird launching input (only if AI is not enabled and no button was clicked)
             // KEY FIX: Only process input if we're still playing (not won/lost)
-            if (!birds_.empty() && scene_ == Scene::Playing) {
+            // Also check if mouse is over any button - if so, don't process bird launching
+            bool mouseOverButton = false;
+            if (!buttonClicked) {
+                sf::Vector2f mousePos = static_cast<sf::Vector2f>(sf::Mouse::getPosition(window_));
+                for (const auto& btn : gameButtons_) {
+                    if (btn->isHovered()) {
+                        mouseOverButton = true;
+                        break;
+                    }
+                }
+            }
+            
+            if (!birds_.empty() && scene_ == Scene::Playing && !aiModeEnabled_ && !buttonClicked && !mouseOverButton) {
                 auto& currentBird = *birds_.front();
                 bool mouseDown = sf::Mouse::isButtonPressed(sf::Mouse::Button::Left);
                 
@@ -285,6 +346,8 @@ void Game::update(float dt) {
                         // Calculate pull and initial velocity exactly as in launchCurrentBird()
                         sf::Vector2f pull = dragStart_ - dragCurrent_;
                         pull = clampVec(pull, config::kMaxPullDistance);
+                        // 修正：pull向量指向从拖拽点回到弹弓的方向（向后拉的方向）
+                        // 初速度应该指向发射方向（向前，与pull相反），所以应该是pull方向，而不是-pull
                         sf::Vector2f v0 = pull * config::kSlingshotStiffness;
                         
                         // Clamp preview speed based on bird type (same as Bird::launch())
@@ -312,12 +375,24 @@ void Game::update(float dt) {
                         }
                         
                         // Simulate trajectory with physics (same as actual bird flight)
+                        // 包括重力和空气阻力，与实际物理模拟一致
                         sf::Vector2f pos = birdBody->position();
                         sf::Vector2f vel = v0;
                         const int steps = 60;  // More steps for accuracy
                         const float stepDt = 0.05f;
                         for (int i = 0; i < steps; ++i) {
                             vel.y += config::kGravity * stepDt;
+                            
+                            // 应用空气阻力（与实际物理模拟一致）
+                            // kAirResistanceAccel是m/s²，需要转换为像素/秒²
+                            float speed = std::sqrt(vel.x * vel.x + vel.y * vel.y);
+                            if (speed > 0.001f) {
+                                const float airResistanceAccelPixels = config::kAirResistanceAccel * config::kPixelsPerMeter;
+                                sf::Vector2f resistanceDir = sf::Vector2f(vel.x / speed, vel.y / speed);
+                                sf::Vector2f resistanceAccel = resistanceDir * airResistanceAccelPixels;
+                                vel += resistanceAccel * stepDt;
+                            }
+                            
                             pos += vel * stepDt;
                             if (pos.y > static_cast<float>(config::kWindowHeight) + 100.0f) break;
                             previewPath_.emplace_back(pos, sf::Color(80, 80, 80, 200));
@@ -392,10 +467,15 @@ void Game::update(float dt) {
             
             if (won) {
                 scoreSystem_.addBonusForRemainingBirds(static_cast<int>(birds_.size()));
+                int finalScore = scoreSystem_.score();
+                Logger::getInstance().info("关卡完成 - 关卡: " + std::to_string(levelIndex_) + 
+                                          ", 最终分数: " + std::to_string(finalScore) +
+                                          ", 剩余小鸟: " + std::to_string(birds_.size()));
                 scene_ = Scene::Score;
                 // Break immediately to prevent further updates
                 break;
             } else if (lost) {
+                Logger::getInstance().info("游戏失败 - 关卡: " + std::to_string(levelIndex_));
                 scene_ = Scene::GameOver;
                 // Break immediately to prevent further updates
                 break;
@@ -447,6 +527,11 @@ void Game::render() {
             }
             break;
         case Scene::Playing: {
+            // Draw AI visual feedback
+            if (aiController_ && aiModeEnabled_) {
+                aiController_->render(window_);
+            }
+            
             // Draw visible ground - extend to cover full game world
             {
                 const float groundLeft = -200.0f;
@@ -702,6 +787,13 @@ void Game::handleSkillInput() {
         }
         
         if (canUseSkill) {
+            std::string birdTypeStr;
+            switch (currentBird.type()) {
+                case BirdType::Red: birdTypeStr = "红鸟"; break;
+                case BirdType::Yellow: birdTypeStr = "黄鸟"; break;
+                case BirdType::Bomb: birdTypeStr = "炸弹鸟"; break;
+            }
+            Logger::getInstance().info("激活技能: " + birdTypeStr);
             currentBird.activateSkill();
         }
     }
@@ -728,10 +820,31 @@ void Game::launchCurrentBird() {
     
     if (!birdToLaunch) return;
     
+    // 记录小鸟类型
+    std::string birdTypeStr;
+    switch (birdToLaunch->type()) {
+        case BirdType::Red: birdTypeStr = "红鸟"; break;
+        case BirdType::Yellow: birdTypeStr = "黄鸟"; break;
+        case BirdType::Bomb: birdTypeStr = "炸弹鸟"; break;
+    }
+    
     sf::Vector2f pull = dragStart_ - dragCurrent_;
-    pull = clampVec(pull, config::kMaxPullDistance);
+    
+    // 对于黄鸟，允许更大的拉弓距离（2倍）以实现2倍速度
+    float maxPullDist = config::kMaxPullDistance;
+    if (birdToLaunch->type() == BirdType::Yellow) {
+        maxPullDist = config::kMaxPullDistance * 2.0f;
+    }
+    pull = clampVec(pull, maxPullDist);
+    
+    // 修正：pull向量指向从拖拽点回到弹弓的方向（向后拉的方向）
+    // 初速度应该指向发射方向（向前，与pull相反），所以应该是pull方向，而不是-pull
+    // 但为了保持向后拉动向前发射的正确逻辑，应该使用pull（而不是-pull）
     sf::Vector2f impulse = pull * config::kSlingshotStiffness;
+    
     birdToLaunch->launch(impulse);
+    
+    Logger::getInstance().info("发射小鸟: " + birdTypeStr + " (剩余: " + std::to_string(birds_.size() - 1) + ")");
     
     // Play bird flying sound when bird is launched
     playBirdFlyingSound(birdToLaunch->type());
@@ -742,6 +855,14 @@ void Game::launchCurrentBird() {
 }
 
 void Game::loadLevel(int index) {
+    Logger::getInstance().info("加载关卡: " + std::to_string(index));
+    
+    // 关闭AI功能（任意方式换关时都关闭）
+    aiModeEnabled_ = false;
+    if (aiController_) {
+        aiController_->setEnabled(false);
+    }
+    
     // Reset bird selection state when loading new level
     birdSelected_ = false;
     levelIndex_ = index;
@@ -768,6 +889,7 @@ void Game::loadLevel(int index) {
     try {
         currentLevel_ = levelLoader_.load(config::levelPath(index));
     } catch (const std::exception& e) {
+        Logger::getInstance().error("关卡加载失败: " + std::string(e.what()));
         std::cerr << e.what() << "\n";
         return;
     }
@@ -792,6 +914,10 @@ void Game::loadLevel(int index) {
         // For circles, JSON position should already be center
         birds_.push_back(std::make_unique<Bird>(b.type, b.position, physics_));
     }
+    
+    Logger::getInstance().info("关卡加载成功 - 方块数: " + std::to_string(blocks_.size()) +
+                               ", 猪数: " + std::to_string(pigs_.size()) +
+                               ", 小鸟数: " + std::to_string(birds_.size()));
 
     // Let the physics world settle to resolve any initial overlaps
     // Box2D will automatically resolve overlaps during settle phase
@@ -830,11 +956,18 @@ void Game::initButtons() {
     menuButtons_.clear();
     
     auto startBtn = std::make_unique<Button>("开始", font_, sf::Vector2f(400.0f, 250.0f), sf::Vector2f(200.0f, 50.0f));
-    startBtn->setCallback([this]() { loadLevel(levelIndex_); scene_ = Scene::Playing; });
+    startBtn->setCallback([this]() { 
+        loadLevel(levelIndex_); 
+        scene_ = Scene::Playing;
+        Logger::getInstance().info("场景切换: MainMenu -> Playing");
+    });
     menuButtons_.push_back(std::move(startBtn));
     
     auto levelBtn = std::make_unique<Button>("选关", font_, sf::Vector2f(400.0f, 320.0f), sf::Vector2f(200.0f, 50.0f));
-    levelBtn->setCallback([this]() { scene_ = Scene::LevelSelect; });
+    levelBtn->setCallback([this]() { 
+        scene_ = Scene::LevelSelect;
+        Logger::getInstance().info("场景切换: MainMenu -> LevelSelect");
+    });
     menuButtons_.push_back(std::move(levelBtn));
     
     auto editorBtn = std::make_unique<Button>("关卡编辑器", font_, sf::Vector2f(400.0f, 390.0f), sf::Vector2f(200.0f, 50.0f));
@@ -842,7 +975,8 @@ void Game::initButtons() {
         if (!levelEditor_) {
             levelEditor_ = std::make_unique<LevelEditor>(window_, font_, this);
         }
-        scene_ = Scene::LevelEditor; 
+        scene_ = Scene::LevelEditor;
+        Logger::getInstance().info("场景切换: MainMenu -> LevelEditor");
     });
     menuButtons_.push_back(std::move(editorBtn));
     
@@ -856,15 +990,31 @@ void Game::initButtons() {
     float gameBtnX = config::kWindowWidth - 120.0f;
     float gameBtnY = 20.0f;
     
-    auto restartBtn = std::make_unique<Button>("重新开始", font_, sf::Vector2f(gameBtnX, gameBtnY), sf::Vector2f(100.0f, 40.0f));
-    restartBtn->setCallback([this]() { resetCurrent(); scene_ = Scene::Playing; });
+    // Auto按钮（AI模式开关）
+    auto autoBtn = std::make_unique<Button>("Auto", font_, sf::Vector2f(gameBtnX, gameBtnY), sf::Vector2f(100.0f, 40.0f));
+    autoBtn->setCallback([this]() { 
+        aiModeEnabled_ = !aiModeEnabled_;
+        if (aiController_) {
+            aiController_->setEnabled(aiModeEnabled_);
+        }
+        Logger::getInstance().info("AI模式切换(按钮): " + std::string(aiModeEnabled_ ? "开启" : "关闭"));
+    });
+    gameButtons_.push_back(std::move(autoBtn));
+    
+    auto restartBtn = std::make_unique<Button>("重新开始", font_, sf::Vector2f(gameBtnX, gameBtnY + 50.0f), sf::Vector2f(100.0f, 40.0f));
+    restartBtn->setCallback([this]() { 
+        Logger::getInstance().info("重新开始当前关卡");
+        resetCurrent(); 
+        scene_ = Scene::Playing; 
+    });
     gameButtons_.push_back(std::move(restartBtn));
     
-    auto nextLevelBtn = std::make_unique<Button>("下一关", font_, sf::Vector2f(gameBtnX, gameBtnY + 50.0f), sf::Vector2f(100.0f, 40.0f));
+    auto nextLevelBtn = std::make_unique<Button>("下一关", font_, sf::Vector2f(gameBtnX, gameBtnY + 100.0f), sf::Vector2f(100.0f, 40.0f));
     nextLevelBtn->setCallback([this]() { 
         levelIndex_ = std::min(levelIndex_ + 1, 8);
         loadLevel(levelIndex_);
         scene_ = Scene::Playing;
+        // AI已在loadLevel中关闭，这里不需要重复关闭
     });
     gameButtons_.push_back(std::move(nextLevelBtn));
     
@@ -872,15 +1022,25 @@ void Game::initButtons() {
     pauseButtons_.clear();
     
     auto resumeBtn = std::make_unique<Button>("继续", font_, sf::Vector2f(400.0f, 250.0f), sf::Vector2f(200.0f, 50.0f));
-    resumeBtn->setCallback([this]() { scene_ = Scene::Playing; });
+    resumeBtn->setCallback([this]() { 
+        scene_ = Scene::Playing;
+        Logger::getInstance().info("场景切换: Paused -> Playing");
+    });
     pauseButtons_.push_back(std::move(resumeBtn));
     
     auto pauseRestartBtn = std::make_unique<Button>("重新开始", font_, sf::Vector2f(400.0f, 320.0f), sf::Vector2f(200.0f, 50.0f));
-    pauseRestartBtn->setCallback([this]() { resetCurrent(); scene_ = Scene::Playing; });
+    pauseRestartBtn->setCallback([this]() { 
+        Logger::getInstance().info("从暂停菜单重新开始关卡");
+        resetCurrent(); 
+        scene_ = Scene::Playing; 
+    });
     pauseButtons_.push_back(std::move(pauseRestartBtn));
     
     auto pauseLevelBtn = std::make_unique<Button>("选关", font_, sf::Vector2f(400.0f, 390.0f), sf::Vector2f(200.0f, 50.0f));
-    pauseLevelBtn->setCallback([this]() { scene_ = Scene::LevelSelect; });
+    pauseLevelBtn->setCallback([this]() { 
+        scene_ = Scene::LevelSelect;
+        Logger::getInstance().info("场景切换: Paused -> LevelSelect");
+    });
     pauseButtons_.push_back(std::move(pauseLevelBtn));
     
     // Level select buttons
@@ -901,6 +1061,7 @@ void Game::initButtons() {
             levelIndex_ = levelNum;
             loadLevel(levelNum);
             scene_ = Scene::Playing;
+            Logger::getInstance().info("场景切换: LevelSelect -> Playing (关卡 " + std::to_string(levelNum) + ")");
         });
         levelSelectButtons_.push_back(std::move(levelBtn));
     }
@@ -908,7 +1069,10 @@ void Game::initButtons() {
     // Back button for level select
     float centerX = config::kWindowWidth * 0.5f;
     auto backBtn = std::make_unique<Button>("返回", font_, sf::Vector2f(centerX - 100.0f, 450.0f), sf::Vector2f(200.0f, 50.0f));
-    backBtn->setCallback([this]() { scene_ = Scene::MainMenu; });
+    backBtn->setCallback([this]() { 
+        scene_ = Scene::MainMenu;
+        Logger::getInstance().info("场景切换: LevelSelect -> MainMenu");
+    });
     levelSelectButtons_.push_back(std::move(backBtn));
     
     // Score screen buttons (also used for GameOver)
@@ -922,12 +1086,15 @@ void Game::initButtons() {
         levelIndex_ = std::min(levelIndex_ + 1, 8);
         loadLevel(levelIndex_);
         scene_ = Scene::Playing;
+        Logger::getInstance().info("场景切换: Score -> Playing (下一关)");
+        // AI已在loadLevel中关闭，这里不需要重复关闭
     });
     scoreButtons_.push_back(std::move(scoreNextBtn));
     
     auto scoreRetryBtn = std::make_unique<Button>("重新开始", font_, 
         sf::Vector2f(centerX - 100.0f, scoreBtnY + buttonSpacing), sf::Vector2f(200.0f, 50.0f));
     scoreRetryBtn->setCallback([this]() {
+        Logger::getInstance().info("从得分界面重新开始关卡");
         resetCurrent();
         scene_ = Scene::Playing;
     });
@@ -935,7 +1102,10 @@ void Game::initButtons() {
     
     auto scoreLevelSelectBtn = std::make_unique<Button>("选关", font_, 
         sf::Vector2f(centerX - 100.0f, scoreBtnY + buttonSpacing * 2), sf::Vector2f(200.0f, 50.0f));
-    scoreLevelSelectBtn->setCallback([this]() { scene_ = Scene::LevelSelect; });
+    scoreLevelSelectBtn->setCallback([this]() { 
+        scene_ = Scene::LevelSelect;
+        Logger::getInstance().info("场景切换: Score -> LevelSelect");
+    });
     scoreButtons_.push_back(std::move(scoreLevelSelectBtn));
 }
 
@@ -1218,6 +1388,104 @@ void Game::renderDebugCollisionBoxes() {
                 debugCircle.setOutlineThickness(2.0f);
                 window_.draw(debugCircle);
             }
+        }
+    }
+}
+
+void Game::updateAI(float dt) {
+    if (!aiController_ || !aiModeEnabled_) {
+        return;
+    }
+    
+    // 更新AI控制器
+    aiController_->update(dt, blocks_, pigs_, birds_, slingshotPos_);
+}
+
+void Game::handleAIControl(float dt) {
+    if (!aiController_ || !aiModeEnabled_ || birds_.empty()) {
+        return;
+    }
+    
+    // 查找第一个未发射的鸟
+    Bird* currentBird = nullptr;
+    for (auto& bird : birds_) {
+        if (bird && !bird->isLaunched()) {
+            currentBird = bird.get();
+            break;
+        }
+    }
+    
+    if (!currentBird) {
+        return;  // 没有未发射的鸟
+    }
+    
+    // 如果AI要求发射
+    if (aiController_->shouldLaunch()) {
+        // 确保鸟在弹弓位置
+        auto* body = currentBird->body();
+        if (body && !currentBird->isLaunched()) {
+            sf::Vector2f currentPos = body->position();
+            float distToSlingshot = std::sqrt(
+                (currentPos.x - slingshotPos_.x) * (currentPos.x - slingshotPos_.x) +
+                (currentPos.y - slingshotPos_.y) * (currentPos.y - slingshotPos_.y)
+            );
+            
+            // 如果鸟不在弹弓位置附近，等待它移动到位置
+            if (distToSlingshot > 20.0f) {
+                // 移动鸟到弹弓位置
+                body->setPosition(slingshotPos_);
+                body->setDynamic(false);
+                body->setVelocity({0.0f, 0.0f});
+                // 不发射，等待下一帧
+                return;
+            }
+            
+            // 获取AI计算的瞄准结果
+            const auto& aim = aiController_->getCurrentAim();
+            if (aim.isValid) {
+                // 设置拖拽状态
+                // dragStart_ 应该是弹弓位置（鸟的当前位置）
+                dragStart_ = slingshotPos_;
+                
+                // 直接使用AI计算的dragEnd（AI已经考虑了2倍速度对于黄鸟）
+                // AI计算的pull已经基于baseMaxInitialSpeed（对于黄鸟是2倍速度）
+                dragCurrent_ = aim.dragEnd;
+                draggingBird_ = currentBird;
+                
+                // 播放选择音效
+                playBirdSelectSound(currentBird->type());
+                birdSelected_ = true;
+                
+                // 发射鸟
+                launchCurrentBird();
+                
+                // 重置AI发射标志并清除轨迹线
+                aiController_->resetLaunchFlag();
+                aiController_->clearTrajectory();
+                
+                // 如果是黄鸟且需要激活技能，标记已设置（在Aiming状态中设置）
+                // 技能激活将在handleAIControl中实时检测
+            } else {
+                // 添加调试日志
+                Logger::getInstance().warning("AI要求发射但aim.isValid为false");
+            }
+        }
+    }
+    
+    // 处理技能激活（黄鸟加速）
+    // 注意：这里需要使用已发射的鸟（第一只鸟），而不是currentBird（可能是下一只未发射的鸟）
+    if (!birds_.empty() && birds_.front()->isLaunched() && 
+        birds_.front()->type() == BirdType::Yellow &&
+        aiController_->shouldActivateSkill()) {
+        
+        auto* launchedBird = birds_.front().get();
+        // 由于轨迹计算时使用了2倍速度限制（假设技能已激活），
+        // 因此在发射后应该立即激活技能，以匹配轨迹计算
+        auto* body = launchedBird->body();
+        if (body && body->active()) {
+            launchedBird->activateSkill();
+            aiController_->resetSkillFlag();
+            Logger::getInstance().info("黄鸟技能立即激活（与轨迹计算一致）");
         }
     }
 }

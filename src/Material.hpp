@@ -20,8 +20,9 @@ inline const std::unordered_map<std::string, Material>& materialLibrary() {
         {"glass", {"glass", 0.5f, 0.2f, 0.4f, 120.0f, 0.7f, sf::Color(160, 200, 255)}},
         {"wood", {"wood", 0.8f, 0.5f, 0.2f, 240.0f, 1.0f, sf::Color(160, 120, 70)}},
         {"woodboard", {"woodboard", 1.0f, 0.5f, 0.25f, 320.0f, 1.0f, sf::Color(140, 100, 60)}},
-        {"stone", {"stone", 2.5f, 0.7f, 0.05f, 800.0f, 1.0f, sf::Color(130, 130, 130)}},
-        {"stoneslab", {"stoneslab", 1.8f, 0.6f, 0.1f, 560.0f, 1.0f, sf::Color(150, 150, 160)}}
+        // Buffed stone variants: +30% strength for higher HP
+        {"stone", {"stone", 2.5f, 0.7f, 0.05f, 1040.0f, 1.0f, sf::Color(130, 130, 130)}},
+        {"stoneslab", {"stoneslab", 1.8f, 0.6f, 0.1f, 728.0f, 1.0f, sf::Color(150, 150, 160)}}
     };
     return kMaterials;
 }

@@ -17,7 +17,9 @@ Block::Block(const Material& material, const sf::Vector2f& pos, const sf::Vector
                                  true, false, false, this);
 
     // Set HP based on material strength (higher strength = more HP)
-    maxHp_ = static_cast<int>(material_.strength * 0.5f);  // Convert strength to HP
+    // 使用全局系数 config::kBlockHpFactor 统一控制所有建筑物血量。
+    // 示例：0.5f -> 原始血量；0.75f -> 在原始基础上整体 +50%。
+    maxHp_ = static_cast<int>(material_.strength * config::kBlockHpFactor);  // Convert strength to HP
     hp_ = maxHp_;
 
     shape_.setSize(size);
@@ -99,7 +101,11 @@ Pig::Pig(PigType type, const sf::Vector2f& pos, PhysicsWorld& world) : type_(typ
     float radius = (type == PigType::Large) ? 26.f : (type == PigType::Medium ? 20.f : 16.f);
     body_ = world.createCircleBody(pos, radius, 1.5f, 0.8f, 0.2f, true, false, false, this);
 
-    maxHp_ = (type == PigType::Large) ? 50 : (type == PigType::Medium ? 30 : 10);
+    // 基础血量来自 Config，并通过系数统一提升。
+    int baseHp = (type == PigType::Large)
+                     ? config::kPigHpLargeBase
+                     : (type == PigType::Medium ? config::kPigHpMediumBase : config::kPigHpSmallBase);
+    maxHp_ = static_cast<int>(baseHp * config::kPigHpFactor);  // 整体提升 30%
     hp_ = maxHp_;
     shape_.setRadius(radius);
     shape_.setOrigin(sf::Vector2f(radius, radius));  // SFML 3.0 requires Vector2f
@@ -240,7 +246,13 @@ void Bird::launch(const sf::Vector2f& impulse) {
             initialMaxSpeed = config::bird_speed::kRedInitialMax;
             break;
         case BirdType::Yellow:
-            initialMaxSpeed = config::bird_speed::kYellowInitialMax;
+            // 黄鸟假设技能立即激活，使用2倍速度限制（与AI轨迹计算一致）
+            // 直接使用2倍速度，不截断
+            initialMaxSpeed = config::bird_speed::kYellowInitialMax * 2.0f;
+            // 如果2倍速度超过上限，则使用上限（但通常不应该发生）
+            if (initialMaxSpeed > config::bird_speed::kYellowMaxSpeed) {
+                initialMaxSpeed = config::bird_speed::kYellowMaxSpeed;
+            }
             break;
         case BirdType::Bomb:
             initialMaxSpeed = config::bird_speed::kBombInitialMax;

@@ -13,9 +13,11 @@
 #include "Level.hpp"
 #include "Physics.hpp"
 #include "ScoreSystem.hpp"
+#include "Logger.hpp"
 
-// Forward declaration
+// Forward declarations
 class LevelEditor;
+class AIController;
 
 enum class Scene {
     Splash,
@@ -131,5 +133,14 @@ private:
     
     // Level Editor
     std::unique_ptr<LevelEditor> levelEditor_;
+    
+    // AI Controller
+    std::unique_ptr<AIController> aiController_;
+    bool aiModeEnabled_{false};  // AI模式开关
+    bool prevAPressed_{false};   // 跟踪A键状态（用于切换AI模式）
+    
+    // AI控制相关
+    void updateAI(float dt);
+    void handleAIControl(float dt);
 };
 

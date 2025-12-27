@@ -5,9 +5,6 @@
 #include <cmath>
 
 #include "Config.hpp"
-#include "DamageConfig.hpp"
-#include "Entity.hpp"
-#include "DamageConfig.hpp"
 #include "Entity.hpp"
 
 // ========== PhysicsBody implementation ==========
@@ -193,7 +190,7 @@ void DamageContactListener::PreSolve(b2Contact* contact, const b2Manifold* oldMa
     float impactSpeed = -velAlongNormal * config::kPixelsPerMeter;  // m/s -> pixels/s
     
     // Minimum speed threshold for damage
-    if (impactSpeed < SpeedThreshold::kMinDamageSpeed) return;
+    if (impactSpeed < config::damage_speed_threshold::kMinDamageSpeed) return;
 
     // Get entity pointers
     Block* blockA = nullptr;
@@ -216,13 +213,20 @@ void DamageContactListener::PreSolve(b2Contact* contact, const b2Manifold* oldMa
         std::string materialA = blockA->material().name;
         std::string materialB = blockB->material().name;
         
-        float strengthA = getMaterialStrength(materialA);
-        float strengthB = getMaterialStrength(materialB);
-        float multiplierA = getDamageMultiplier(materialA);
-        float multiplierB = getDamageMultiplier(materialB);
-        float speedMultiplier = getSpeedDamageMultiplier(impactSpeed);
+        float strengthA = config::getMaterialStrength(materialA);
+        float strengthB = config::getMaterialStrength(materialB);
+        float multiplierA = config::getDamageMultiplier(materialA);
+        float multiplierB = config::getDamageMultiplier(materialB);
+            // Reduce outgoing damage from stone variants against buildings by 30%
+            if (materialA == "stone" || materialA == "stoneslab") {
+                multiplierA *= 0.7f;
+            }
+            if (materialB == "stone" || materialB == "stoneslab") {
+                multiplierB *= 0.7f;
+            }
+        float speedMultiplier = config::getSpeedDamageMultiplier(impactSpeed);
         
-        float baseDamage = BaseDamage::kBlockToBlock * speedMultiplier;
+        float baseDamage = config::damage_base::kBlockToBlock * speedMultiplier;
         
         if (materialA == materialB) {
             // Same material: both take damage
@@ -243,41 +247,49 @@ void DamageContactListener::PreSolve(b2Contact* contact, const b2Manifold* oldMa
     } else if (blockA && pigB) {
         // Block-to-pig collision
         std::string materialA = blockA->material().name;
-        float multiplierA = getDamageMultiplier(materialA);
-        float speedMultiplier = getSpeedDamageMultiplier(impactSpeed);
+        float multiplierA = config::getDamageMultiplier(materialA);
+            // Reduce stone variants' damage to pigs by 50%
+            if (materialA == "stone" || materialA == "stoneslab") {
+                multiplierA *= 0.5f;
+            }
+        float speedMultiplier = config::getSpeedDamageMultiplier(impactSpeed);
         
         // Special case: glass never kills pigs
         if (materialA == "glass") {
-            float damage = BaseDamage::kBlockToPig * speedMultiplier * multiplierA * 0.3f;  // Reduced damage
+            float damage = config::damage_base::kBlockToPig * speedMultiplier * multiplierA * 0.3f;  // Reduced damage
             pigB->takeDamage(damage);
         } else {
-            float damage = BaseDamage::kBlockToPig * speedMultiplier * multiplierA;
+            float damage = config::damage_base::kBlockToPig * speedMultiplier * multiplierA;
             pigB->takeDamage(damage);
             // Block also takes damage from pig
-            float blockDamage = BaseDamage::kBlockToPig * speedMultiplier * DamageMultiplier::kPig * 0.5f;
+            float blockDamage = config::damage_base::kBlockToPig * speedMultiplier * config::damage_multiplier::kPig * 0.5f;
             blockA->takeDamage(blockDamage);
         }
     } else if (blockB && pigA) {
         // Pig-to-block collision (same as block-to-pig)
         std::string materialB = blockB->material().name;
-        float multiplierB = getDamageMultiplier(materialB);
-        float speedMultiplier = getSpeedDamageMultiplier(impactSpeed);
+        float multiplierB = config::getDamageMultiplier(materialB);
+            // Reduce stone variants' damage to pigs by 50%
+            if (materialB == "stone" || materialB == "stoneslab") {
+                multiplierB *= 0.5f;
+            }
+        float speedMultiplier = config::getSpeedDamageMultiplier(impactSpeed);
         
         // Special case: glass never kills pigs
         if (materialB == "glass") {
-            float damage = BaseDamage::kBlockToPig * speedMultiplier * multiplierB * 0.3f;  // Reduced damage
+            float damage = config::damage_base::kBlockToPig * speedMultiplier * multiplierB * 0.3f;  // Reduced damage
             pigA->takeDamage(damage);
         } else {
-            float damage = BaseDamage::kBlockToPig * speedMultiplier * multiplierB;
+            float damage = config::damage_base::kBlockToPig * speedMultiplier * multiplierB;
             pigA->takeDamage(damage);
             // Block also takes damage from pig
-            float blockDamage = BaseDamage::kBlockToPig * speedMultiplier * DamageMultiplier::kPig * 0.5f;
+            float blockDamage = config::damage_base::kBlockToPig * speedMultiplier * config::damage_multiplier::kPig * 0.5f;
             blockB->takeDamage(blockDamage);
         }
     } else if (pigA && pigB) {
         // Pig-to-pig collision
-        float speedMultiplier = getSpeedDamageMultiplier(impactSpeed);
-        float damage = BaseDamage::kPigToPig * speedMultiplier;
+        float speedMultiplier = config::getSpeedDamageMultiplier(impactSpeed);
+        float damage = config::damage_base::kPigToPig * speedMultiplier;
         pigA->takeDamage(damage);
         pigB->takeDamage(damage);
     }
