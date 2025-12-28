@@ -5,6 +5,7 @@
 #include <cmath>
 #include <limits>
 #include <chrono>
+#include <tuple>
 #include <SFML/Graphics.hpp>
 
 #include "Game.hpp"
@@ -93,6 +94,8 @@ void AIController::update(float dt,
     
     // 如果有已发射的鸟还在飞行，等待它们消失
     if (hasActiveLaunchedBird) {
+        lastBirdWasActive_ = true;
+        birdDisappearWaitTimer_ = 0.0f;  // 重置等待计时器
         shouldLaunch_ = false;  // 取消待发射指令（如果有）
         // 清除轨迹预览，避免显示过时的轨迹
         if (!trajectoryPreview_.empty()) {
@@ -105,9 +108,28 @@ void AIController::update(float dt,
         }
         return;
     } else {
-        // 当所有鸟都消失后，重置日志标志
+        // 当所有鸟都消失后，检查是否需要等待1秒
+        if (lastBirdWasActive_) {
+            // 刚刚所有鸟都消失了，开始计时
+            lastBirdWasActive_ = false;
+            birdDisappearWaitTimer_ = 0.0f;
+            Logger::getInstance().info("AI等待: 所有鸟已消失，等待1秒后准备发射下一只");
+        }
+        
+        // 如果正在等待中，继续等待
+        if (birdDisappearWaitTimer_ < kBirdDisappearWaitTime) {
+            birdDisappearWaitTimer_ += dt;
+            shouldLaunch_ = false;  // 取消待发射指令（如果有）
+            // 清除轨迹预览，避免显示过时的轨迹
+            if (!trajectoryPreview_.empty()) {
+                trajectoryPreview_.clear();
+            }
+            return;  // 等待时间未到，不执行后续逻辑
+        }
+        
+        // 等待时间已到，可以准备发射下一只
         if (waitingForBirdsLogged_) {
-            Logger::getInstance().info("AI等待结束: 所有鸟已消失，准备发射下一只");
+            Logger::getInstance().info("AI等待结束: 等待时间已过，准备发射下一只");
             waitingForBirdsLogged_ = false;
         }
     }
@@ -173,8 +195,16 @@ void AIController::update(float dt,
                                           "°, 力度=" + std::to_string(currentAim_.power) + 
                                           "%, 误差=" + std::to_string(currentAim_.trajectoryError) + "%");
                 
-                // 对于黄鸟，适当放宽误差阈值（因为轨迹计算更复杂）
-                float errorThreshold = (nextBirdType == BirdType::Yellow) ? 5.0f : 3.0f;
+                // 对于不同鸟类，使用不同的误差阈值
+                // 黄鸟：轨迹计算复杂，放宽到5%
+                // 炸弹鸟：远距离目标，放宽到8%（允许更大的误差）
+                // 红鸟：标准3%
+                float errorThreshold = 3.0f;
+                if (nextBirdType == BirdType::Yellow) {
+                    errorThreshold = 5.0f;
+                } else if (nextBirdType == BirdType::Bomb) {
+                    errorThreshold = 8.0f;  // 炸弹鸟远距离目标，允许更大误差
+                }
                 
                 // 如果瞄准有效且误差在可接受范围内，准备发射
                 if (currentAim_.trajectoryError < errorThreshold) {
@@ -274,9 +304,43 @@ TargetInfo AIController::selectTargetForBombBird(const std::vector<TargetInfo>& 
     TargetInfo bestTarget;
     float bestValue = -1.0f;
     
+    // 炸弹鸟只选择猪（targets参数应该只包含猪），不选择方块
     // 优先选择被多层障碍物保护的猪
+    // 如果所有目标都没有保护，则选择最远或威胁值最高的目标
+    bool hasProtectedTarget = false;
     for (const auto& target : targets) {
-        float value = evaluateTargetValueForBomb(target, blocks);
+        // 确保只处理猪目标（type == Pig）
+        if (target.type != TargetInfo::Pig) {
+            continue;  // 跳过非猪目标
+        }
+        if (target.obstacleLayerCount > 0) {
+            hasProtectedTarget = true;
+            break;
+        }
+    }
+    
+    for (const auto& target : targets) {
+        // 炸弹鸟只选择猪，不选择方块
+        if (target.type != TargetInfo::Pig) {
+            continue;  // 跳过方块目标
+        }
+        
+        float value = 0.0f;
+        
+        if (hasProtectedTarget) {
+            // 如果有被保护的目标，优先选择保护层数多的
+            value = evaluateTargetValueForBomb(target, blocks);
+        } else {
+            // 如果没有被保护的目标，选择最远或威胁值最高的
+            float dist = distance(target.position, slingshotPos_);
+            float threatValue = target.threatValue;
+            
+            // 价值 = 距离因子 + 威胁值因子
+            float distanceFactor = dist * 0.1f;  // 距离越远越好
+            float threatFactor = threatValue * 10.0f;
+            value = distanceFactor + threatFactor;
+        }
+        
         if (value > bestValue) {
             bestValue = value;
             bestTarget = target;
@@ -327,19 +391,57 @@ TargetInfo AIController::selectTargetForRedBird(const std::vector<TargetInfo>& t
 }
 
 TargetInfo AIController::selectTargetForYellowBird(const std::vector<TargetInfo>& targets) {
-    // 黄鸟策略：优先选择最远的目标（利用高速度）
+    // 黄鸟策略：优先选择远距离的裸露目标，或者中远距离有少量保护的目标
     if (targets.empty()) {
         TargetInfo invalid;
         return invalid;
     }
     
     TargetInfo bestTarget;
-    float maxDist = -1.0f;
+    float bestValue = -1.0f;
     
     for (const auto& target : targets) {
         float dist = distance(target.position, slingshotPos_);
-        if (dist > maxDist) {
-            maxDist = dist;
+        int obstacleLayers = target.obstacleLayerCount;
+        
+        // 价值计算：优先远距离、裸露或少量保护的目标
+        float distanceScore = 0.0f;
+        float obstacleScore = 0.0f;
+        
+        // 距离评分：远距离目标得分更高
+        // 中远距离（600-1200像素）得分最高
+        if (dist >= 600.0f && dist <= 1200.0f) {
+            distanceScore = 100.0f;  // 中远距离满分
+        } else if (dist > 1200.0f) {
+            distanceScore = 80.0f + (dist - 1200.0f) * 0.05f;  // 超远距离也有较高得分
+        } else if (dist >= 400.0f && dist < 600.0f) {
+            distanceScore = 60.0f;  // 中距离
+        } else {
+            distanceScore = 40.0f;  // 近距离
+        }
+        
+        // 障碍物评分：裸露或少量保护的目标得分高
+        // 0层（裸露）= 100分，1层 = 70分，2层 = 40分，3层以上 = 20分
+        if (obstacleLayers == 0) {
+            obstacleScore = 100.0f;  // 完全裸露，最高分
+        } else if (obstacleLayers == 1) {
+            obstacleScore = 70.0f;   // 少量保护，仍然很好
+        } else if (obstacleLayers == 2) {
+            obstacleScore = 40.0f;   // 中等保护
+        } else {
+            obstacleScore = 20.0f;   // 多层保护，不优先
+        }
+        
+        // 综合价值：距离得分 * 障碍物得分（归一化到0-1范围）
+        float value = (distanceScore / 100.0f) * (obstacleScore / 100.0f) * 100.0f;
+        
+        // 额外奖励：远距离且裸露的目标
+        if (obstacleLayers == 0 && dist >= 800.0f) {
+            value *= 1.5f;  // 额外50%奖励
+        }
+        
+        if (value > bestValue) {
+            bestValue = value;
             bestTarget = target;
         }
     }
@@ -515,7 +617,13 @@ TrajectoryResult AIController::calculateTrajectory(const sf::Vector2f& startPos,
                 targetRadius = std::max(target.size.x, target.size.y) * 0.5f;
             }
             
-            if (distToTarget < targetRadius + 10.0f) {
+            // 对于炸弹鸟，扩大碰撞检测范围（因为爆炸范围大）
+            float collisionRadius = targetRadius + 10.0f;
+            if (birdType == BirdType::Bomb) {
+                collisionRadius = targetRadius + 30.0f;  // 炸弹鸟有更大的爆炸范围
+            }
+            
+            if (distToTarget < collisionRadius) {
                 result.hitTarget = true;
                 result.hitTime = i * dt;
                 result.hitPoint = pos;
@@ -523,16 +631,8 @@ TrajectoryResult AIController::calculateTrajectory(const sf::Vector2f& startPos,
                 break;
             }
             
-            // 应用物理
-            pos = applyPhysicsStep(pos, vel, dt, maxSpeed);
-            vel = pos - result.points.back();
-            vel = vel / dt;
-            
-            // 限制速度
-            float speed = length(vel);
-            if (speed > maxSpeed) {
-                vel = normalize(vel) * maxSpeed;
-            }
+            // 应用物理（返回更新后的位置和速度）
+            std::tie(pos, vel) = applyPhysicsStep(pos, vel, dt, maxSpeed);
             
             // 边界检查
             if (pos.y > static_cast<float>(config::kWindowHeight) + 100.0f || 
@@ -577,13 +677,21 @@ TrajectoryResult AIController::calculateYellowBirdTrajectory(const sf::Vector2f&
     float currentTime = 0.0f;
     
     // 黄鸟技能立即激活（开局释放技能），速度直接翻倍
-    // 修复：假设技能在发射时立即激活，速度从初始就使用加速后的速度
+    // 注意：初始速度已经是1000（kYellowInitialMax * 2.0f），因为可以拉2倍距离
+    // 技能激活后，速度翻倍，但受限于kYellowMaxSpeed = 1500
+    // 根据Bird::activateSkill()，速度翻倍但不超过maxSpeed_
     bool skillActivated = true;  // 立即激活
-    float maxSpeed = config::bird_speed::kYellowMaxSpeed;  // 直接使用加速后的最大速度
-    // 初始速度需要按加速倍率计算（2倍速度，但考虑到是从初始速度500加速到1500，实际是3倍）
-    // 为简化，假设初始发射时就达到了加速后的速度效果
-    // 实际上，初始速度仍然是500（受初始速度限制），但轨迹计算时假设立即加速
-    vel = vel * (config::bird_speed::kYellowMaxSpeed / config::bird_speed::kYellowInitialMax);  // 约3倍加速
+    float maxSpeed = config::bird_speed::kYellowMaxSpeed;  // 技能后最大速度：1500
+    
+    // 技能激活：速度翻倍（但受限于maxSpeed = 1500）
+    // 初始速度已经是1000（2倍初始速度），翻倍后是2000，但受限于1500
+    float currentSpeed = length(vel);
+    if (currentSpeed > 0.001f) {
+        float newSpeed = std::min(currentSpeed * 2.0f, maxSpeed);  // 翻倍但不超过1500
+        vel = normalize(vel) * newSpeed;
+        Logger::getInstance().info("黄鸟轨迹计算: 初始速度=" + std::to_string(currentSpeed) + 
+                                  ", 技能后速度=" + std::to_string(newSpeed));
+    }
     
     float closestDist = std::numeric_limits<float>::max();
     sf::Vector2f closestPoint;
@@ -615,10 +723,8 @@ TrajectoryResult AIController::calculateYellowBirdTrajectory(const sf::Vector2f&
             break;
         }
         
-        // 应用物理
-        sf::Vector2f oldPos = pos;
-        pos = applyPhysicsStep(pos, vel, dt, maxSpeed);
-        vel = (pos - oldPos) / dt;
+        // 应用物理（返回更新后的位置和速度）
+        std::tie(pos, vel) = applyPhysicsStep(pos, vel, dt, maxSpeed);
         
         // 边界检查
         if (pos.y > static_cast<float>(config::kWindowHeight) + 100.0f || 
@@ -636,7 +742,7 @@ TrajectoryResult AIController::calculateYellowBirdTrajectory(const sf::Vector2f&
     return result;
 }
 
-sf::Vector2f AIController::applyPhysicsStep(sf::Vector2f pos, sf::Vector2f vel, float dt, float maxSpeed) {
+std::pair<sf::Vector2f, sf::Vector2f> AIController::applyPhysicsStep(sf::Vector2f pos, sf::Vector2f vel, float dt, float maxSpeed) {
     // 应用重力
     vel.y += config::kGravity * dt;
     
@@ -647,9 +753,12 @@ sf::Vector2f AIController::applyPhysicsStep(sf::Vector2f pos, sf::Vector2f vel, 
         sf::Vector2f resistanceDir = normalize(vel);
         sf::Vector2f resistanceAccel = -resistanceDir * airResistanceAccelPixels;
         vel += resistanceAccel * dt;
+        
+        // 重新计算速度（空气阻力可能改变了速度大小）
+        speed = length(vel);
     }
     
-    // 限制速度
+    // 限制速度（必须在应用重力和空气阻力之后检查）
     if (speed > maxSpeed) {
         vel = normalize(vel) * maxSpeed;
     }
@@ -657,7 +766,7 @@ sf::Vector2f AIController::applyPhysicsStep(sf::Vector2f pos, sf::Vector2f vel, 
     // 更新位置
     pos += vel * dt;
     
-    return pos;
+    return std::make_pair(pos, vel);
 }
 
 float AIController::calculateAirResistance(float speed) {
@@ -720,8 +829,10 @@ AimingInfo AIController::optimizeLaunchParameters(BirdType birdType,
             maxSpeed = config::bird_speed::kRedMaxSpeed;
             break;
         case BirdType::Yellow:
-            baseMaxSpeed = config::bird_speed::kYellowInitialMax;  // 初始发射速度限制：500
-            maxSpeed = config::bird_speed::kYellowMaxSpeed;        // 技能后速度：1500
+            // 黄鸟允许2倍拉弓距离，且Bird::launch()中使用2倍初始速度限制
+            // 实际最大初始速度 = kYellowInitialMax * 2.0f = 500 * 2 = 1000
+            baseMaxSpeed = config::bird_speed::kYellowInitialMax * 2.0f;  // 初始发射速度限制：1000
+            maxSpeed = config::bird_speed::kYellowMaxSpeed;                // 技能后速度：1500
             useSkill = true;  // 黄鸟默认使用技能
             break;
         case BirdType::Bomb:
@@ -733,19 +844,21 @@ AimingInfo AIController::optimizeLaunchParameters(BirdType birdType,
     // 注意：baseMaxSpeed是初始发射速度限制，轨迹计算时会考虑技能加速
     
     // 迭代搜索最佳角度和力度
-    // 角度范围：15-75度，步长2度（优化性能，仍保证精度）
-    // 力度范围：30-100%，步长5%
+    // 角度范围：5-85度，步长2度（扩大范围以找到更多可能的角度）
+    // 对于炸弹鸟，角度范围可以更大（包括更小的角度）
+    // 力度范围：20-100%，步长5%（降低最小力度，允许更小的力度）
     // 如果找到误差<3%的解决方案，提前终止
-    for (float angle = 15.0f; angle <= 75.0f; angle += 2.0f) {
+    float angleStep = (birdType == BirdType::Bomb) ? 1.5f : 2.0f;  // 炸弹鸟使用更小的步长
+    for (float angle = 5.0f; angle <= 85.0f; angle += angleStep) {
         // 如果已经找到很好的解，可以进行精细搜索
-        if (bestError < 3.0f && angle > 15.0f) {
+        if (bestError < 3.0f && angle > 5.0f) {
             // 在最佳角度附近进行精细搜索
-            float fineAngleStart = std::max(15.0f, angle - 4.0f);
-            float fineAngleEnd = std::min(75.0f, angle + 4.0f);
+            float fineAngleStart = std::max(5.0f, angle - 4.0f);
+            float fineAngleEnd = std::min(85.0f, angle + 4.0f);
             for (float fineAngle = fineAngleStart; fineAngle <= fineAngleEnd; fineAngle += 1.0f) {
                 if (fineAngle == angle) continue;  // 跳过已经计算过的角度
                 
-                for (float power = 30.0f; power <= 100.0f; power += 5.0f) {
+                for (float power = 20.0f; power <= 100.0f; power += 5.0f) {
                     sf::Vector2f velocity = velocityFromAngleAndPower(fineAngle, power, birdType);
                     
                     float speed = length(velocity);
@@ -753,8 +866,10 @@ AimingInfo AIController::optimizeLaunchParameters(BirdType birdType,
                         velocity = normalize(velocity) * baseMaxSpeed;
                     }
                     
+                    // 对于炸弹鸟，使用更长的计算时间以覆盖远距离目标
+                    float maxTrajectoryTime = (birdType == BirdType::Bomb) ? 8.0f : 5.0f;
                     TrajectoryResult traj = calculateTrajectory(
-                        slingshotPos, velocity, birdType, useSkill, target, 5.0f);
+                        slingshotPos, velocity, birdType, useSkill, target, maxTrajectoryTime);
                     
                     float error = traj.minDistanceToTarget;
                     if (traj.hitTarget) error = 0.0f;
@@ -777,9 +892,18 @@ AimingInfo AIController::optimizeLaunchParameters(BirdType birdType,
                         if (birdType == BirdType::Yellow) {
                             maxPull = config::kMaxPullDistance * 2.0f;
                         }
+                        
                         if (pullDist > maxPull) {
                             pull = normalize(pull) * maxPull;
+                            // 重新计算速度，确保与限制后的pull一致
+                            velocity = -pull * config::kSlingshotStiffness;
+                            // 限制速度到baseMaxSpeed
+                            float speed = length(velocity);
+                            if (speed > baseMaxSpeed) {
+                                velocity = normalize(velocity) * baseMaxSpeed;
+                            }
                         }
+                        
                         bestAim.dragEnd = slingshotPos + pull;
                         
                         if (birdType == BirdType::Yellow && useSkill) {
@@ -790,7 +914,7 @@ AimingInfo AIController::optimizeLaunchParameters(BirdType birdType,
             }
         }
         
-        for (float power = 30.0f; power <= 100.0f; power += 5.0f) {
+        for (float power = 20.0f; power <= 100.0f; power += 5.0f) {
             sf::Vector2f velocity = velocityFromAngleAndPower(angle, power, birdType);
             
             // 限制初始速度
@@ -799,9 +923,10 @@ AimingInfo AIController::optimizeLaunchParameters(BirdType birdType,
                 velocity = normalize(velocity) * baseMaxSpeed;
             }
             
-            // 计算轨迹
+            // 计算轨迹（对于炸弹鸟，使用更长的计算时间以覆盖远距离目标）
+            float maxTrajectoryTime = (birdType == BirdType::Bomb) ? 8.0f : 5.0f;
             TrajectoryResult traj = calculateTrajectory(
-                slingshotPos, velocity, birdType, useSkill, target, 5.0f);
+                slingshotPos, velocity, birdType, useSkill, target, maxTrajectoryTime);
             
             // 评估误差
             float error = traj.minDistanceToTarget;
@@ -834,8 +959,18 @@ AimingInfo AIController::optimizeLaunchParameters(BirdType birdType,
                     maxPull = config::kMaxPullDistance * 2.0f;  // 黄鸟允许2倍距离
                 }
                 
+                // 如果拉弓距离超过限制，重新计算速度和pull以保持一致
                 if (pullDist > maxPull) {
                     pull = normalize(pull) * maxPull;
+                    // 重新计算速度，确保与限制后的pull一致
+                    velocity = -pull * config::kSlingshotStiffness;
+                    // 限制速度到baseMaxSpeed
+                    float speed = length(velocity);
+                    if (speed > baseMaxSpeed) {
+                        velocity = normalize(velocity) * baseMaxSpeed;
+                        // 再次更新pull以保持一致
+                        pull = -velocity / config::kSlingshotStiffness;
+                    }
                 }
                 
                 bestAim.dragEnd = slingshotPos + pull;
@@ -843,11 +978,6 @@ AimingInfo AIController::optimizeLaunchParameters(BirdType birdType,
                 // 黄鸟技能激活时间（立即激活）
                 if (birdType == BirdType::Yellow && useSkill) {
                     bestAim.skillActivationTime = 0.0f;  // 发射时立即激活
-                }
-                
-                // 如果找到误差<3%的解决方案，可以提前终止（但继续搜索以找到更好的）
-                if (bestError < 3.0f) {
-                    // 可以提前终止，但为了找到最佳解，继续搜索
                 }
             }
         }
@@ -873,7 +1003,9 @@ sf::Vector2f AIController::velocityFromAngleAndPower(float angle, float power, B
             maxSpeed = config::bird_speed::kRedInitialMax;
             break;
         case BirdType::Yellow:
-            maxSpeed = config::bird_speed::kYellowInitialMax;  // 使用初始速度限制：500
+            // 黄鸟允许2倍拉弓距离，且Bird::launch()中使用2倍初始速度限制
+            // 实际最大初始速度 = kYellowInitialMax * 2.0f = 500 * 2 = 1000
+            maxSpeed = config::bird_speed::kYellowInitialMax * 2.0f;  // 使用2倍初始速度限制：1000
             break;
         case BirdType::Bomb:
             maxSpeed = config::bird_speed::kBombInitialMax;

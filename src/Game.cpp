@@ -1466,32 +1466,37 @@ void Game::handleAIControl(float dt) {
                 // 设置发射状态
                 launchState_ = LaunchState::Dragging;
                 
+                // 如果是黄鸟，先获取指向（因为发射后currentBird可能变化）
+                bool willActivateSkill = (isYellowBird && needSkillActivation);
+                
                 // 发射鸟
                 launchCurrentBird();
                 
-                // 如果是黄鸟且需要激活技能，立即激活
-                if (isYellowBird && needSkillActivation) {
-                    // 发射后立即尝试激活技能
-                    // 注意：需要使用已发射的鸟（通常是第一只鸟）
+                // 如果是黄鸟且需要激活技能，立即激活（必须在发射后的同一帧执行）
+                if (willActivateSkill) {
+                    // 发射后立即查找已发射的黄鸟
                     Bird* launchedBird = nullptr;
-                    for (auto& bird : birds_) {
-                        if (bird && bird->isLaunched() && bird->type() == BirdType::Yellow) {
-                            launchedBird = bird.get();
-                            break;
+                    // 优先检查刚刚发射的鸟（通常是第一只）
+                    if (!birds_.empty() && birds_.front()->isLaunched() && 
+                        birds_.front()->type() == BirdType::Yellow) {
+                        launchedBird = birds_.front().get();
+                    } else {
+                        // 如果第一只不是，遍历查找
+                        for (auto& bird : birds_) {
+                            if (bird && bird->isLaunched() && bird->type() == BirdType::Yellow) {
+                                launchedBird = bird.get();
+                                break;
+                            }
                         }
                     }
                     
-                    if (launchedBird) {
-                        // 黄鸟只需要launched()为true就可以激活技能，不需要body->active()
-                        if (launchedBird->isLaunched()) {
-                            launchedBird->activateSkill();
-                            aiController_->resetSkillFlag();
-                            Logger::getInstance().info("黄鸟技能立即激活（发射后立即触发）");
-                        } else {
-                            Logger::getInstance().info("警告：黄鸟未正确发射，无法激活技能");
-                        }
+                    if (launchedBird && launchedBird->isLaunched()) {
+                        // 黄鸟只需要launched()为true就可以激活技能
+                        launchedBird->activateSkill();
+                        aiController_->resetSkillFlag();
+                        Logger::getInstance().info("黄鸟技能立即激活（发射后立即触发，速度翻倍）");
                     } else {
-                        Logger::getInstance().info("警告：未找到已发射的黄鸟");
+                        Logger::getInstance().info("警告：黄鸟发射后未找到，尝试备用激活");
                     }
                 }
                 

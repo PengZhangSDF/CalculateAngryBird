@@ -161,8 +161,8 @@ private:
                                                    float maxTime = 5.0f);
     
     // 物理计算辅助函数
-    sf::Vector2f applyPhysicsStep(sf::Vector2f pos, sf::Vector2f vel, 
-                                  float dt, float maxSpeed);
+    std::pair<sf::Vector2f, sf::Vector2f> applyPhysicsStep(sf::Vector2f pos, sf::Vector2f vel,
+                                                          float dt, float maxSpeed);
     float calculateAirResistance(float speed);
     
     // ========== 子系统4: 发射参数计算 ==========
@@ -220,6 +220,11 @@ private:
     float launchCooldown_{0.0f};
     static constexpr float kLaunchCooldownTime = 0.5f;  // 发射后冷却时间
     bool waitingForBirdsLogged_{false};  // 记录是否已记录等待日志
+    
+    // 鸟消失后的等待计时器
+    float birdDisappearWaitTimer_{0.0f};  // 鸟消失后等待计时器
+    static constexpr float kBirdDisappearWaitTime = 1.0f;  // 鸟消失后等待1秒
+    bool lastBirdWasActive_{false};  // 上一帧是否有活动的鸟
     
     // 轨迹预览延迟
     float trajectoryPreviewTimer_{0.0f};  // 轨迹预览计时器
