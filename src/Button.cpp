@@ -2,6 +2,26 @@
 #include "Button.hpp"
 
 #include <algorithm>
+#include <iostream>
+
+// Static texture for wood background (shared by all buttons)
+sf::Texture& Button::getWoodTexture() {
+    static sf::Texture woodTexture;
+    static bool textureLoaded = false;
+    
+    if (!textureLoaded) {
+        if (!woodTexture.loadFromFile("image/wood.png")) {
+            std::cerr << "警告: 无法加载按钮背景贴图 image/wood.png\n";
+            // If loading fails, texture will be invalid but button will still work with default color
+        } else {
+            // Enable texture repeating for seamless tiling
+            woodTexture.setRepeated(true);
+        }
+        textureLoaded = true;
+    }
+    
+    return woodTexture;
+}
 
 Button::Button(const std::string& text, const sf::Font& font, const sf::Vector2f& position, 
                const sf::Vector2f& size)
@@ -10,6 +30,17 @@ Button::Button(const std::string& text, const sf::Font& font, const sf::Vector2f
     shape_.setPosition(position);
     shape_.setOutlineColor(sf::Color::Black);
     shape_.setOutlineThickness(2.0f);
+    
+    // Set wood texture
+    sf::Texture& woodTex = getWoodTexture();
+    shape_.setTexture(&woodTex);
+    // Set texture rect to cover button size (texture will repeat if enabled)
+    sf::Vector2u texSize = woodTex.getSize();
+    if (texSize.x > 0 && texSize.y > 0) {
+        // Use texture rect to make texture fill the button (with repetition)
+        sf::IntRect texRect(sf::Vector2i(0, 0), sf::Vector2i(static_cast<int>(size.x), static_cast<int>(size.y)));
+        shape_.setTextureRect(texRect);
+    }
     
     text_.setFillColor(textColor_);
     text_.setStyle(sf::Text::Bold);
@@ -29,6 +60,13 @@ void Button::setPosition(const sf::Vector2f& position) {
 
 void Button::setSize(const sf::Vector2f& size) {
     shape_.setSize(size);
+    // Update texture rect to match new size
+    sf::Texture& woodTex = getWoodTexture();
+    sf::Vector2u texSize = woodTex.getSize();
+    if (texSize.x > 0 && texSize.y > 0) {
+        sf::IntRect texRect(sf::Vector2i(0, 0), sf::Vector2i(static_cast<int>(size.x), static_cast<int>(size.y)));
+        shape_.setTextureRect(texRect);
+    }
     updateVisuals();
 }
 
@@ -66,6 +104,7 @@ void Button::draw(sf::RenderWindow& window) const {
 }
 
 void Button::updateVisuals() {
+    // Apply color tint to the texture for hover/pressed effects
     if (pressed_) {
         shape_.setFillColor(pressedColor_);
     } else if (hovered_) {

@@ -57,6 +57,12 @@ private:
     sf::Font font_;
     sf::Texture backgroundTexture_;
     std::optional<sf::Sprite> backgroundSprite_;  // Will be set after texture is loaded
+    sf::Texture choiceBackgroundTexture_;  // Level select background texture
+    std::optional<sf::Sprite> choiceBackgroundSprite_;  // Level select background sprite
+    sf::Texture winBackgroundTexture_;  // Win screen background texture
+    std::optional<sf::Sprite> winBackgroundSprite_;  // Win screen background sprite
+    sf::Texture slingshotTexture_;  // Slingshot texture
+    std::optional<sf::Sprite> slingshotSprite_;  // Slingshot sprite (optional because SFML 3.0 requires texture for construction)
     Scene scene_{Scene::Splash};
     float splashTimer_{1.0f};
     float gameTime_{0.0f};  // Total game time for bird launch cooldown

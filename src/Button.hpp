@@ -4,6 +4,7 @@
 #include <SFML/Graphics.hpp>
 #include <functional>
 #include <string>
+#include <memory>
 
 class Button {
 public:
@@ -23,6 +24,7 @@ public:
     
 private:
     void updateVisuals();
+    static sf::Texture& getWoodTexture();  // Static method to load and return wood texture
     
     sf::RectangleShape shape_;
     sf::Text text_;
@@ -32,10 +34,10 @@ private:
     bool pressed_{false};
     bool wasPressed_{false};
     
-    // Colors
-    sf::Color normalColor_{sf::Color(200, 200, 200)};
-    sf::Color hoverColor_{sf::Color(150, 150, 255)};
-    sf::Color pressedColor_{sf::Color(100, 100, 200)};
+    // Colors for hover/pressed effects (applied as tint)
+    sf::Color normalColor_{sf::Color::White};
+    sf::Color hoverColor_{sf::Color(200, 200, 255)};  // Slight blue tint when hovered
+    sf::Color pressedColor_{sf::Color(150, 150, 200)};  // Darker blue tint when pressed
     sf::Color textColor_{sf::Color::Black};
 };
 

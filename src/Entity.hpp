@@ -3,6 +3,7 @@
 
 #include <SFML/Graphics.hpp>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -68,14 +69,19 @@ public:
 
 private:
     void updateVisuals();  // Update visual appearance based on health and damage flash
+    void loadTextures();  // Load pig textures based on health level
     
     PigType type_;
     PhysicsBody body_;
     int hp_{10};
     int maxHp_{10};
-    sf::CircleShape shape_;
+    float radius_{16.0f};
+    std::optional<sf::Sprite> sprite_;  // Optional because SFML 3.0 requires texture for sprite construction
+    std::vector<sf::Texture> textures_;  // Textures for different health levels
+    int currentTextureIndex_{0};  // Current texture index based on health
     float age_{0.0f};
     float damageFlash_{0.0f};  // Visual feedback timer
+    float currentRotation_{0.0f};  // Store rotation angle for texture switching
 };
 
 class Bird : public Entity {
@@ -92,6 +98,8 @@ public:
     void activateSkill();
 
 private:
+    void loadTexture();  // Load bird texture based on type
+    
     BirdType type_;
     PhysicsBody body_;
     PhysicsWorld* world_{nullptr};
@@ -100,7 +108,9 @@ private:
     float explosionTimer_{0.0f};  // 0 = not activated, -1 = skill activated, >0 = countdown
     bool exploded_{false};
     float explosionVisualTime_{0.0f};
-    sf::CircleShape shape_;
+    float radius_{14.0f};
+    std::optional<sf::Sprite> sprite_;  // Optional because SFML 3.0 requires texture for sprite construction
+    sf::Texture texture_;
     float restTimer_{0.0f};
     float maxSpeed_{800.0f};  // Per-bird max speed limit (initialized in constructor)
 };

@@ -66,6 +66,48 @@ Game::Game()
         backgroundSprite_->setScale(sf::Vector2f(scaleX, scaleY));
     }
     
+    // Load choice background texture (level select)
+    if (!choiceBackgroundTexture_.loadFromFile("image/choice_background.png")) {
+        std::cerr << "警告: 无法加载选关界面背景图片 image/choice_background.png\n";
+    } else {
+        choiceBackgroundSprite_ = sf::Sprite(choiceBackgroundTexture_);
+        // Scale background to fit window
+        sf::Vector2u textureSize = choiceBackgroundTexture_.getSize();
+        float scaleX = static_cast<float>(config::kWindowWidth) / static_cast<float>(textureSize.x);
+        float scaleY = static_cast<float>(config::kWindowHeight) / static_cast<float>(textureSize.y);
+        choiceBackgroundSprite_->setScale(sf::Vector2f(scaleX, scaleY));
+    }
+    
+    // Load win background texture (score screen)
+    if (!winBackgroundTexture_.loadFromFile("image/win_back.png")) {
+        std::cerr << "警告: 无法加载胜利界面背景图片 image/win_back.png\n";
+    } else {
+        winBackgroundSprite_ = sf::Sprite(winBackgroundTexture_);
+        // Scale background to fit window
+        sf::Vector2u textureSize = winBackgroundTexture_.getSize();
+        float scaleX = static_cast<float>(config::kWindowWidth) / static_cast<float>(textureSize.x);
+        float scaleY = static_cast<float>(config::kWindowHeight) / static_cast<float>(textureSize.y);
+        winBackgroundSprite_->setScale(sf::Vector2f(scaleX, scaleY));
+    }
+    
+    // Load slingshot texture
+    if (!slingshotTexture_.loadFromFile("image/dangong.png")) {
+        std::cerr << "警告: 无法加载弹弓贴图 image/dangong.png\n";
+    } else {
+        slingshotSprite_ = sf::Sprite(slingshotTexture_);
+        // Set origin to center
+        sf::Vector2u textureSize = slingshotTexture_.getSize();
+        slingshotSprite_->setOrigin(sf::Vector2f(textureSize.x * 0.5f, textureSize.y * 0.5f));
+        
+        // 缩放弹弓贴图使其高度等于两个鸟重叠的高度
+        // 鸟的半径是14.f，所以一个鸟的直径是28像素
+        // 两个鸟向上重叠的高度大约是42像素（一个完整鸟 + 另一个鸟的一半重叠）
+        const float birdRadius = 14.0f;
+        const float targetHeight = birdRadius * 3.0f;  // 两个鸟重叠的高度：1.5个直径 = 42像素
+        float scale = targetHeight / static_cast<float>(textureSize.y);
+        slingshotSprite_->setScale(sf::Vector2f(scale, scale));
+    }
+    
     initAudio();
     initButtons();
     
@@ -521,6 +563,10 @@ void Game::render() {
             }
             break;
         case Scene::LevelSelect:
+            // Draw choice background
+            if (choiceBackgroundSprite_.has_value()) {
+                window_.draw(*choiceBackgroundSprite_);
+            }
             renderLevelSelect();
             // Draw level select buttons
             for (const auto& btn : levelSelectButtons_) {
@@ -549,6 +595,12 @@ void Game::render() {
                 btn->draw(window_);
             }
 
+            // Draw slingshot
+            if (slingshotSprite_.has_value()) {
+                slingshotSprite_->setPosition(slingshotPos_);
+                window_.draw(*slingshotSprite_);
+            }
+            
             for (auto& b : blocks_) b->draw(window_);
             for (auto& p : pigs_) p->draw(window_);
             for (auto& b : birds_) b->draw(window_);
@@ -586,6 +638,10 @@ void Game::render() {
             break;
         }
         case Scene::Score:
+            // Draw win background
+            if (winBackgroundSprite_.has_value()) {
+                window_.draw(*winBackgroundSprite_);
+            }
             renderScoreScreen();
             // Draw score screen buttons
             for (const auto& btn : scoreButtons_) {
@@ -624,6 +680,12 @@ void Game::render() {
                      static_cast<float>(config::kWindowHeight) - 10.0f});
                 groundShape.setFillColor(sf::Color(110, 180, 80));
                 window_.draw(groundShape);
+            }
+            
+            // Draw slingshot
+            if (slingshotSprite_.has_value()) {
+                slingshotSprite_->setPosition(slingshotPos_);
+                window_.draw(*slingshotSprite_);
             }
             
             for (auto& b : blocks_) b->draw(window_);

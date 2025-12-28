@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <iostream>
 
 #include "Config.hpp"
 
@@ -98,8 +99,8 @@ void Block::draw(sf::RenderWindow& window) {
 }
 
 Pig::Pig(PigType type, const sf::Vector2f& pos, PhysicsWorld& world) : type_(type) {
-    float radius = (type == PigType::Large) ? 26.f : (type == PigType::Medium ? 20.f : 16.f);
-    body_ = world.createCircleBody(pos, radius, 1.5f, 0.8f, 0.2f, true, false, false, this);
+    radius_ = (type == PigType::Large) ? 26.f : (type == PigType::Medium ? 20.f : 16.f);
+    body_ = world.createCircleBody(pos, radius_, 1.5f, 0.8f, 0.2f, true, false, false, this);
 
     // 基础血量来自 Config，并通过系数统一提升。
     int baseHp = (type == PigType::Large)
@@ -107,14 +108,17 @@ Pig::Pig(PigType type, const sf::Vector2f& pos, PhysicsWorld& world) : type_(typ
                      : (type == PigType::Medium ? config::kPigHpMediumBase : config::kPigHpSmallBase);
     maxHp_ = static_cast<int>(baseHp * config::kPigHpFactor);  // 整体提升 30%
     hp_ = maxHp_;
-    shape_.setRadius(radius);
-    shape_.setOrigin(sf::Vector2f(radius, radius));  // SFML 3.0 requires Vector2f
-    shape_.setFillColor(sf::Color(120, 200, 120));
-    shape_.setOutlineColor(sf::Color::Black);
-    shape_.setOutlineThickness(2.f);
+    
+    // 加载贴图
+    loadTextures();
+    updateVisuals();
+    
     // CRITICAL FIX: Use body position instead of initial pos to ensure visual matches collision box
-    shape_.setPosition(body_.position());
-    shape_.setRotation(sf::radians(body_.angle()));  // SFML 3.0 uses sf::radians()
+    if (sprite_.has_value()) {
+        sprite_->setPosition(body_.position());
+        currentRotation_ = body_.angle();
+        sprite_->setRotation(sf::radians(currentRotation_));  // SFML 3.0 uses sf::radians()
+    }
 }
 
 void Pig::update(float dt) {
@@ -142,10 +146,14 @@ void Pig::update(float dt) {
     }
     
     // CRITICAL FIX: Always sync visual position and rotation with physics body
-    shape_.setPosition(body_.position());
-    shape_.setRotation(sf::radians(body_.angle()));  // SFML 3.0 uses sf::radians()
+    if (sprite_.has_value()) {
+        sprite_->setPosition(body_.position());
+        currentRotation_ = body_.angle();  // 保存旋转角度
+        sprite_->setRotation(sf::radians(currentRotation_));  // SFML 3.0 uses sf::radians()
+    }
     
-    // Update damage flash effect
+    // Update damage flash effect and texture if health changed
+    bool healthChanged = false;
     if (damageFlash_ > 0.0f) {
         damageFlash_ -= dt;
         updateVisuals();
@@ -154,8 +162,10 @@ void Pig::update(float dt) {
     // Legacy damage system for bird impacts (keep for compatibility)
     float damage = body_.hitStrength() * 0.1f;
     if (age_ >= kSpawnInvincibleTime && damage > 1.0f) {
+        int oldHp = hp_;
         hp_ -= static_cast<int>(damage);
         hp_ = std::max(0, hp_);
+        healthChanged = (oldHp != hp_);
         // hitStrength is cleared by PhysicsWorld each frame, so we don't need to reset it
         updateVisuals();
         if (hp_ <= 0) {
@@ -169,6 +179,11 @@ void Pig::update(float dt) {
         body_.setActive(false);
         destroyed_ = true;
     }
+    
+    // Update texture if health level changed
+    if (healthChanged) {
+        updateVisuals();
+    }
 }
 
 void Pig::takeDamage(float damage) {
@@ -180,32 +195,101 @@ void Pig::takeDamage(float damage) {
     updateVisuals();
 }
 
+void Pig::loadTextures() {
+    textures_.clear();
+    textures_.resize(4);  // 4个健康等级：100%, 75%, 50%, 25%
+    
+    // 加载4个健康等级的贴图
+    std::vector<std::string> texturePaths = {
+        "image/pig_nor_100.png",
+        "image/pig_nor_75.png",
+        "image/pig_nor_50.png",
+        "image/pig_nor_25.png"
+    };
+    
+    bool textureLoaded = false;
+    for (size_t i = 0; i < textures_.size(); ++i) {
+        if (!textures_[i].loadFromFile(texturePaths[i])) {
+            std::cerr << "警告: 无法加载猪贴图: " << texturePaths[i] << "\n";
+            // 如果加载失败，创建一个简单的占位符（可选）
+        } else if (!textureLoaded && i == 0) {
+            textureLoaded = true;
+        }
+    }
+    
+    // 如果至少有一个贴图加载成功，设置sprite
+    if (textureLoaded && !textures_.empty() && textures_[0].getSize().x > 0) {
+        // 初始化sprite_使用第一个贴图（SFML 3.0要求使用纹理构造）
+        sprite_ = sf::Sprite(textures_[0]);
+        sf::Vector2u textureSize = textures_[0].getSize();
+        sprite_->setOrigin(sf::Vector2f(textureSize.x * 0.5f, textureSize.y * 0.5f));
+        float targetSize = radius_ * 2.0f;
+        float scale = targetSize / static_cast<float>(std::max(textureSize.x, textureSize.y));
+        sprite_->setScale(sf::Vector2f(scale, scale));
+    }
+}
+
 void Pig::updateVisuals() {
+    // 根据血量确定贴图索引
     float ratio = std::max(0.0f, static_cast<float>(hp_) / static_cast<float>(maxHp_));
-    if (damageFlash_ > 0.0f) {
-        // Flash red when damaged
-        float flashIntensity = damageFlash_ / 0.2f;
-        shape_.setFillColor(sf::Color(
-            static_cast<std::uint8_t>(120 + (255 - 120) * flashIntensity * 0.5f),
-            static_cast<std::uint8_t>(200 * ratio * (1.0f - flashIntensity * 0.3f)),
-            static_cast<std::uint8_t>(120 * (1.0f - flashIntensity * 0.3f))
-        ));
+    int newTextureIndex = 0;
+    
+    if (ratio > 0.75f) {
+        newTextureIndex = 0;  // 100%
+    } else if (ratio > 0.5f) {
+        newTextureIndex = 1;  // 75%
+    } else if (ratio > 0.25f) {
+        newTextureIndex = 2;  // 50%
     } else {
-        // Normal color based on health
-        shape_.setFillColor(sf::Color(120, static_cast<std::uint8_t>(200 * ratio), 120));
+        newTextureIndex = 3;  // 25%
+    }
+    
+    // 如果贴图索引改变，更新贴图
+    if (newTextureIndex != currentTextureIndex_ && newTextureIndex < static_cast<int>(textures_.size()) && 
+        textures_[newTextureIndex].getSize().x > 0) {
+        currentTextureIndex_ = newTextureIndex;
+        // 创建新的sprite（SFML 3.0要求使用纹理构造）
+        sprite_ = sf::Sprite(textures_[currentTextureIndex_]);
+        
+        // 设置贴图原点为中心
+        sf::Vector2u textureSize = textures_[currentTextureIndex_].getSize();
+        sprite_->setOrigin(sf::Vector2f(textureSize.x * 0.5f, textureSize.y * 0.5f));
+        
+        // 根据猪的类型缩放贴图，确保和当前显示大小差不多
+        // 当前半径：Small=16, Medium=20, Large=26
+        // 假设贴图原始大小约为32x32，需要缩放到radius_*2
+        float targetSize = radius_ * 2.0f;
+        float scale = targetSize / static_cast<float>(std::max(textureSize.x, textureSize.y));
+        sprite_->setScale(sf::Vector2f(scale, scale));
+        
+        // 恢复旋转角度（因为更换贴图时会重置）
+        sprite_->setRotation(sf::radians(currentRotation_));
+    }
+    
+    // 受伤闪烁效果（可选，通过颜色调制实现）
+    if (sprite_.has_value() && damageFlash_ > 0.0f) {
+        float flashIntensity = damageFlash_ / 0.2f;
+        // 在受伤时稍微变红
+        sprite_->setColor(sf::Color(
+            255,
+            static_cast<std::uint8_t>(255 * (1.0f - flashIntensity * 0.3f)),
+            static_cast<std::uint8_t>(255 * (1.0f - flashIntensity * 0.3f))
+        ));
+    } else if (sprite_.has_value()) {
+        sprite_->setColor(sf::Color::White);
     }
 }
 
 void Pig::draw(sf::RenderWindow& window) {
-    if (!destroyed_) {
-        window.draw(shape_);
+    if (!destroyed_ && sprite_.has_value()) {
+        window.draw(*sprite_);
     }
 }
 
 Bird::Bird(BirdType type, const sf::Vector2f& pos, PhysicsWorld& world) : type_(type), world_(&world) {
-    float radius = 14.f;
+    radius_ = 14.f;
     // Birds start as static (not dynamic) until launched
-    body_ = world.createCircleBody(pos, radius, 1.0f, 0.5f, 0.4f, false, true, false, this);
+    body_ = world.createCircleBody(pos, radius_, 1.0f, 0.5f, 0.4f, false, true, false, this);
 
     // Set per-bird max speed limits
     switch (type) {
@@ -220,16 +304,14 @@ Bird::Bird(BirdType type, const sf::Vector2f& pos, PhysicsWorld& world) : type_(
             break;
     }
 
-    shape_.setRadius(radius);
-    shape_.setOrigin(sf::Vector2f(radius, radius));  // SFML 3.0 requires Vector2f
+    // 加载贴图（必须在设置位置和旋转之前调用）
+    loadTexture();
+    
     // CRITICAL FIX: Use body position instead of initial pos to ensure visual matches collision box
-    shape_.setPosition(body_.position());
-    shape_.setRotation(sf::radians(body_.angle()));  // SFML 3.0 uses sf::radians()
-    if (type == BirdType::Red) shape_.setFillColor(sf::Color(200, 60, 60));
-    if (type == BirdType::Yellow) shape_.setFillColor(sf::Color(240, 220, 80));
-    if (type == BirdType::Bomb) shape_.setFillColor(sf::Color(60, 60, 60));
-    shape_.setOutlineColor(sf::Color::Black);
-    shape_.setOutlineThickness(2.f);
+    if (sprite_.has_value()) {
+        sprite_->setPosition(body_.position());
+        sprite_->setRotation(sf::radians(body_.angle()));  // SFML 3.0 uses sf::radians()
+    }
 }
 
 void Bird::launch(const sf::Vector2f& impulse) {
@@ -382,16 +464,20 @@ void Bird::update(float dt) {
         return;
     }
     // CRITICAL FIX: Always sync visual position and rotation with physics body
-    shape_.setPosition(body_.position());
-    shape_.setRotation(sf::radians(body_.angle()));  // SFML 3.0 uses sf::radians()
+    if (sprite_.has_value()) {
+        sprite_->setPosition(body_.position());
+        sprite_->setRotation(sf::radians(body_.angle()));  // SFML 3.0 uses sf::radians()
+    }
 
     // Hard clamp to visual ground so birds never fall through the bottom of the screen
     const float groundTop = static_cast<float>(config::kWindowHeight) - 30.0f;
     sf::Vector2f pos = body_.position();
-    if (pos.y > groundTop - shape_.getRadius()) {
-        body_.setPosition({pos.x, groundTop - shape_.getRadius()});
+    if (pos.y > groundTop - radius_) {
+        body_.setPosition({pos.x, groundTop - radius_});
         body_.setVelocity({body_.velocity().x, 0.0f});
-        shape_.setPosition(body_.position());
+        if (sprite_.has_value()) {
+            sprite_->setPosition(body_.position());
+        }
     }
 
     // Despawn bird when far outside the visible area
@@ -486,6 +572,38 @@ void Bird::update(float dt) {
     }
 }
 
+void Bird::loadTexture() {
+    std::string texturePath;
+    switch (type_) {
+        case BirdType::Red:
+            texturePath = "image/bird_red.png";
+            break;
+        case BirdType::Yellow:
+            texturePath = "image/bird_yellow.png";
+            break;
+        case BirdType::Bomb:
+            texturePath = "image/bird_black.png";
+            break;
+    }
+    
+    if (!texture_.loadFromFile(texturePath)) {
+        std::cerr << "警告: 无法加载鸟贴图: " << texturePath << "\n";
+        return;  // 如果加载失败，sprite将无法使用，但不会崩溃
+    }
+    
+    // 设置贴图（SFML 3.0要求sprite必须有一个纹理）
+    sprite_ = sf::Sprite(texture_);
+    
+    // 设置贴图原点为中心
+    sf::Vector2u textureSize = texture_.getSize();
+    sprite_->setOrigin(sf::Vector2f(textureSize.x * 0.5f, textureSize.y * 0.5f));
+    
+    // 缩放贴图以适应半径（假设贴图原始大小约为28x28，需要缩放到radius_*2）
+    float targetSize = radius_ * 2.0f;
+    float scale = targetSize / static_cast<float>(std::max(textureSize.x, textureSize.y));
+    sprite_->setScale(sf::Vector2f(scale, scale));
+}
+
 void Bird::draw(sf::RenderWindow& window) {
     if (destroyed_) return;
     // Bomb explosion visual
@@ -494,14 +612,17 @@ void Bird::draw(sf::RenderWindow& window) {
         float radius = 120.0f * (1.0f - t);
         sf::CircleShape boom(radius);
         boom.setOrigin({radius, radius});
-        boom.setPosition(shape_.getPosition());
+        boom.setPosition(body_.position());
         sf::Color c(255, 200, 0, static_cast<std::uint8_t>(255 * t));
         boom.setFillColor(sf::Color(255, 200, 0, static_cast<std::uint8_t>(120 * t)));
         boom.setOutlineColor(c);
         boom.setOutlineThickness(4.0f);
         window.draw(boom);
     }
-    window.draw(shape_);
+    // 只有在sprite已初始化时才绘制
+    if (sprite_.has_value()) {
+        window.draw(*sprite_);
+    }
 }
 
 ScorePopups::ScorePopups(const sf::Font& font) : font_(font) {}
