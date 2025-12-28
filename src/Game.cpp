@@ -389,7 +389,8 @@ void Game::update(float dt) {
                             if (speed > 0.001f) {
                                 const float airResistanceAccelPixels = config::kAirResistanceAccel * config::kPixelsPerMeter;
                                 sf::Vector2f resistanceDir = sf::Vector2f(vel.x / speed, vel.y / speed);
-                                sf::Vector2f resistanceAccel = resistanceDir * airResistanceAccelPixels;
+                                // 空气阻力方向必须与速度方向相反（阻力阻碍运动）
+                                sf::Vector2f resistanceAccel = -resistanceDir * airResistanceAccelPixels;
                                 vel += resistanceAccel * stepDt;
                             }
                             
@@ -527,10 +528,7 @@ void Game::render() {
             }
             break;
         case Scene::Playing: {
-            // Draw AI visual feedback
-            if (aiController_ && aiModeEnabled_) {
-                aiController_->render(window_);
-            }
+            // AI visual feedback will be drawn with trajectory preview below
             
             // Draw visible ground - extend to cover full game world
             {
@@ -555,11 +553,21 @@ void Game::render() {
             for (auto& p : pigs_) p->draw(window_);
             for (auto& b : birds_) b->draw(window_);
 
-            // Trajectory preview
-            if (!previewPath_.empty()) {
+            // Trajectory preview (player mode)
+            if (!previewPath_.empty() && !aiModeEnabled_) {
                 window_.draw(previewPath_.data(),
                              previewPath_.size(),
                              sf::PrimitiveType::LineStrip);
+            }
+            
+            // AI trajectory preview
+            if (aiModeEnabled_ && aiController_) {
+                const auto& aiTrajectory = aiController_->getTrajectoryPreview();
+                if (!aiTrajectory.empty()) {
+                    window_.draw(aiTrajectory.data(),
+                                aiTrajectory.size(),
+                                sf::PrimitiveType::LineStrip);
+                }
             }
 
             if (launchState_ == LaunchState::Dragging && !birds_.empty()) {
@@ -1430,25 +1438,24 @@ void Game::handleAIControl(float dt) {
                 (currentPos.y - slingshotPos_.y) * (currentPos.y - slingshotPos_.y)
             );
             
-            // 如果鸟不在弹弓位置附近，等待它移动到位置
+            // 如果鸟不在弹弓位置附近，移动它到位置
             if (distToSlingshot > 20.0f) {
-                // 移动鸟到弹弓位置
                 body->setPosition(slingshotPos_);
                 body->setDynamic(false);
                 body->setVelocity({0.0f, 0.0f});
-                // 不发射，等待下一帧
+                // 等待下一帧再发射，确保位置正确
                 return;
             }
             
             // 获取AI计算的瞄准结果
             const auto& aim = aiController_->getCurrentAim();
             if (aim.isValid) {
-                // 设置拖拽状态
-                // dragStart_ 应该是弹弓位置（鸟的当前位置）
-                dragStart_ = slingshotPos_;
+                // 检查是否是黄鸟且需要激活技能
+                bool isYellowBird = (currentBird->type() == BirdType::Yellow);
+                bool needSkillActivation = aiController_->shouldActivateSkill();
                 
-                // 直接使用AI计算的dragEnd（AI已经考虑了2倍速度对于黄鸟）
-                // AI计算的pull已经基于baseMaxInitialSpeed（对于黄鸟是2倍速度）
+                // 设置拖拽状态
+                dragStart_ = slingshotPos_;
                 dragCurrent_ = aim.dragEnd;
                 draggingBird_ = currentBird;
                 
@@ -1456,36 +1463,58 @@ void Game::handleAIControl(float dt) {
                 playBirdSelectSound(currentBird->type());
                 birdSelected_ = true;
                 
+                // 设置发射状态
+                launchState_ = LaunchState::Dragging;
+                
                 // 发射鸟
                 launchCurrentBird();
+                
+                // 如果是黄鸟且需要激活技能，立即激活
+                if (isYellowBird && needSkillActivation) {
+                    // 发射后立即尝试激活技能
+                    // 注意：需要使用已发射的鸟（通常是第一只鸟）
+                    Bird* launchedBird = nullptr;
+                    for (auto& bird : birds_) {
+                        if (bird && bird->isLaunched() && bird->type() == BirdType::Yellow) {
+                            launchedBird = bird.get();
+                            break;
+                        }
+                    }
+                    
+                    if (launchedBird) {
+                        // 黄鸟只需要launched()为true就可以激活技能，不需要body->active()
+                        if (launchedBird->isLaunched()) {
+                            launchedBird->activateSkill();
+                            aiController_->resetSkillFlag();
+                            Logger::getInstance().info("黄鸟技能立即激活（发射后立即触发）");
+                        } else {
+                            Logger::getInstance().info("警告：黄鸟未正确发射，无法激活技能");
+                        }
+                    } else {
+                        Logger::getInstance().info("警告：未找到已发射的黄鸟");
+                    }
+                }
                 
                 // 重置AI发射标志并清除轨迹线
                 aiController_->resetLaunchFlag();
                 aiController_->clearTrajectory();
-                
-                // 如果是黄鸟且需要激活技能，标记已设置（在Aiming状态中设置）
-                // 技能激活将在handleAIControl中实时检测
-            } else {
-                // 添加调试日志
-                Logger::getInstance().warning("AI要求发射但aim.isValid为false");
             }
         }
     }
     
-    // 处理技能激活（黄鸟加速）
-    // 注意：这里需要使用已发射的鸟（第一只鸟），而不是currentBird（可能是下一只未发射的鸟）
-    if (!birds_.empty() && birds_.front()->isLaunched() && 
-        birds_.front()->type() == BirdType::Yellow &&
-        aiController_->shouldActivateSkill()) {
-        
-        auto* launchedBird = birds_.front().get();
-        // 由于轨迹计算时使用了2倍速度限制（假设技能已激活），
-        // 因此在发射后应该立即激活技能，以匹配轨迹计算
-        auto* body = launchedBird->body();
-        if (body && body->active()) {
-            launchedBird->activateSkill();
-            aiController_->resetSkillFlag();
-            Logger::getInstance().info("黄鸟技能立即激活（与轨迹计算一致）");
+    // 备用：处理技能激活（如果上面的逻辑没有执行，这里作为备用）
+    // 检查所有已发射的黄鸟，找到需要激活技能的
+    if (aiController_->shouldActivateSkill()) {
+        for (auto& bird : birds_) {
+            if (bird && bird->isLaunched() && bird->type() == BirdType::Yellow) {
+                // 黄鸟只需要launched()为true就可以激活技能
+                if (bird->isLaunched()) {
+                    bird->activateSkill();
+                    aiController_->resetSkillFlag();
+                    Logger::getInstance().info("黄鸟技能立即激活（备用逻辑触发）");
+                    break;  // 只激活第一个找到的黄鸟
+                }
+            }
         }
     }
 }

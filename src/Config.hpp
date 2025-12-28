@@ -49,8 +49,10 @@ constexpr char kWindowTitle[] = "Angry Birds SFML 3 Demo";
 // ======= 弹弓相关配置 =======
 // 最大拉伸距离（像素）：控制玩家能拉多远。
 constexpr float kMaxPullDistance = 220.0f;
-// 弹弓“弹性系数”，越大，小鸟初始速度越高。
+// 弹弓"弹性系数"，越大，小鸟初始速度越高。
 constexpr float kSlingshotStiffness = 10.0f;
+// AI轨迹计算上限次数：限制收集的候选轨迹数量，避免计算过多
+constexpr int kMaxTrajectoryCandidates = 10;
 // 弹弓锚点位置（像素坐标，屏幕左上为原点）。
 constexpr float kSlingshotX = 200.0f;
 constexpr float kSlingshotY = 500.0f;
