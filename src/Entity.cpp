@@ -13,7 +13,7 @@ constexpr float kSpawnInvincibleTime = 2.5f;  // seconds
 }
 
 Block::Block(const Material& material, const sf::Vector2f& pos, const sf::Vector2f& size, PhysicsWorld& world)
-    : material_(material) {
+    : material_(material), size_(size) {
     body_ = world.createBoxBody(pos, size, material_.density, material_.friction, material_.restitution,
                                  true, false, false, this);
 
@@ -23,16 +23,27 @@ Block::Block(const Material& material, const sf::Vector2f& pos, const sf::Vector
     maxHp_ = static_cast<int>(material_.strength * config::kBlockHpFactor);  // Convert strength to HP
     hp_ = maxHp_;
 
+    // 初始化备用shape（如果纹理加载失败时使用）
     shape_.setSize(size);
     shape_.setOrigin(size * 0.5f);  // Center origin matches Box2D body center
     auto fill = material_.color;
     fill.a = static_cast<std::uint8_t>(material_.opacity * 255);
     shape_.setFillColor(fill);
-    // CRITICAL FIX: Use body position instead of initial pos to ensure visual matches collision box
-    shape_.setPosition(body_.position());
-    shape_.setRotation(sf::radians(body_.angle()));  // SFML 3.0 uses sf::radians()
     shape_.setOutlineColor(sf::Color::Black);
     shape_.setOutlineThickness(1.0f);
+    
+    // 加载纹理
+    loadTexture();
+    updateTextureRect();
+    
+    // CRITICAL FIX: Use body position instead of initial pos to ensure visual matches collision box
+    if (sprite_.has_value()) {
+        sprite_->setPosition(body_.position());
+        sprite_->setRotation(sf::radians(body_.angle()));  // SFML 3.0 uses sf::radians()
+    } else {
+        shape_.setPosition(body_.position());
+        shape_.setRotation(sf::radians(body_.angle()));  // SFML 3.0 uses sf::radians()
+    }
 }
 
 void Block::update(float dt) {
@@ -42,11 +53,16 @@ void Block::update(float dt) {
         return;
     }
     // CRITICAL FIX: Always sync visual position and rotation with physics body
-    shape_.setPosition(body_.position());
-    shape_.setRotation(sf::radians(body_.angle()));  // SFML 3.0 uses sf::radians()
+    if (sprite_.has_value()) {
+        sprite_->setPosition(body_.position());
+        sprite_->setRotation(sf::radians(body_.angle()));  // SFML 3.0 uses sf::radians()
+    } else {
+        shape_.setPosition(body_.position());
+        shape_.setRotation(sf::radians(body_.angle()));  // SFML 3.0 uses sf::radians()
+    }
     
-    // Update damage flash effect
-    if (damageFlash_ > 0.0f) {
+    // Update damage flash effect (for fallback shape only, texture doesn't need color changes)
+    if (!sprite_.has_value() && damageFlash_ > 0.0f) {
         damageFlash_ -= dt;
         // Update visual color during flash
         float healthRatio = static_cast<float>(hp_) / static_cast<float>(maxHp_);
@@ -58,7 +74,7 @@ void Block::update(float dt) {
             static_cast<std::uint8_t>(baseColor.b * (1.0f - flashIntensity * 0.3f)),
             static_cast<std::uint8_t>(material_.opacity * 255)
         ));
-    } else if (hp_ < maxHp_) {
+    } else if (!sprite_.has_value() && hp_ < maxHp_) {
         // Update visual color based on health (when not flashing)
         float healthRatio = static_cast<float>(hp_) / static_cast<float>(maxHp_);
         auto baseColor = material_.color;
@@ -94,8 +110,69 @@ void Block::takeDamage(float damage) {
 
 void Block::draw(sf::RenderWindow& window) {
     if (!destroyed_) {
-        window.draw(shape_);
+        if (sprite_.has_value()) {
+            window.draw(*sprite_);
+        } else {
+            window.draw(shape_);
+        }
     }
+}
+
+void Block::loadTexture() {
+    std::string texturePath;
+    
+    // 根据材质类型选择对应的贴图
+    if (material_.name == "wood" || material_.name == "woodboard") {
+        texturePath = "image/log.png";
+    } else if (material_.name == "glass") {
+        texturePath = "image/glass.png";
+    } else if (material_.name == "stoneslab") {
+        texturePath = "image/stone_lab.png";
+    } else if (material_.name == "stone") {
+        texturePath = "image/stone.png";
+    } else {
+        // 未知材质，不使用纹理
+        return;
+    }
+    
+    // 加载纹理
+    if (!texture_.loadFromFile(texturePath)) {
+        std::cerr << "警告: 无法加载材质贴图 " << texturePath << "\n";
+        return;
+    }
+    
+    // 创建sprite
+    sprite_ = sf::Sprite(texture_);
+    sprite_->setOrigin(size_ * 0.5f);  // 设置原点为中心
+    sprite_->setPosition(body_.position());
+    sprite_->setRotation(sf::radians(body_.angle()));
+}
+
+void Block::updateTextureRect() {
+    if (!sprite_.has_value()) {
+        return;
+    }
+    
+    // 获取纹理尺寸
+    sf::Vector2u textureSize = texture_.getSize();
+    float textureWidth = static_cast<float>(textureSize.x);
+    float textureHeight = static_cast<float>(textureSize.y);
+    
+    // 获取Block的实际尺寸
+    float blockWidth = size_.x;
+    float blockHeight = size_.y;
+    
+    // 设置纹理为可重复模式（SFML 3.0使用setRepeated）
+    texture_.setRepeated(true);
+    
+    // 设置纹理矩形：使用Block的实际尺寸，纹理会自动重复
+    // 如果Block比贴图小，纹理会被裁剪到Block大小
+    // 如果Block比贴图大，纹理会重复填满Block
+    sprite_->setTextureRect(sf::IntRect(
+        sf::Vector2i(0, 0),
+        sf::Vector2i(static_cast<int>(blockWidth), static_cast<int>(blockHeight))
+    ));
+    sprite_->setScale(sf::Vector2f(1.0f, 1.0f));
 }
 
 Pig::Pig(PigType type, const sf::Vector2f& pos, PhysicsWorld& world) : type_(type) {
@@ -328,13 +405,9 @@ void Bird::launch(const sf::Vector2f& impulse) {
             initialMaxSpeed = config::bird_speed::kRedInitialMax;
             break;
         case BirdType::Yellow:
-            // 黄鸟假设技能立即激活，使用2倍速度限制（与AI轨迹计算一致）
-            // 直接使用2倍速度，不截断
-            initialMaxSpeed = config::bird_speed::kYellowInitialMax * 2.0f;
-            // 如果2倍速度超过上限，则使用上限（但通常不应该发生）
-            if (initialMaxSpeed > config::bird_speed::kYellowMaxSpeed) {
-                initialMaxSpeed = config::bird_speed::kYellowMaxSpeed;
-            }
+            // 黄鸟使用正常初始速度限制（手动模式下）
+            // 技能激活后速度才会翻倍（在activateSkill()中处理）
+            initialMaxSpeed = config::bird_speed::kYellowInitialMax;
             break;
         case BirdType::Bomb:
             initialMaxSpeed = config::bird_speed::kBombInitialMax;
@@ -599,8 +672,10 @@ void Bird::loadTexture() {
     sprite_->setOrigin(sf::Vector2f(textureSize.x * 0.5f, textureSize.y * 0.5f));
     
     // 缩放贴图以适应半径（假设贴图原始大小约为28x28，需要缩放到radius_*2）
+    // 然后放大1.25倍
     float targetSize = radius_ * 2.0f;
     float scale = targetSize / static_cast<float>(std::max(textureSize.x, textureSize.y));
+    scale *= 1.25f;  // 放大1.25倍
     sprite_->setScale(sf::Vector2f(scale, scale));
 }
 

@@ -7,6 +7,7 @@
 #include <iostream>
 #include <optional>
 #include <variant>
+#include <random>
 
 #include "Config.hpp"
 #include "Material.hpp"
@@ -107,6 +108,70 @@ Game::Game()
         float scale = targetHeight / static_cast<float>(textureSize.y);
         slingshotSprite_->setScale(sf::Vector2f(scale, scale));
     }
+
+    // 主界面动画用小鸟贴图（纯视觉，不参与物理/声音）
+    if (!splashBirdRedTexture_.loadFromFile("image/bird_red.png")) {
+        std::cerr << "警告: 无法加载主界面动画红鸟贴图 image/bird_red.png\n";
+    }
+    if (!splashBirdYellowTexture_.loadFromFile("image/bird_yellow.png")) {
+        std::cerr << "警告: 无法加载主界面动画黄鸟贴图 image/bird_yellow.png\n";
+    }
+    if (!splashBirdBlackTexture_.loadFromFile("image/bird_black.png")) {
+        std::cerr << "警告: 无法加载主界面动画黑鸟贴图 image/bird_black.png\n";
+    }
+    
+    // 加载主界面动画用的地面、草和天空贴图
+    if (!groundTexture_.loadFromFile("image/ground.png")) {
+        std::cerr << "警告: 无法加载地面贴图 image/ground.png\n";
+    } else {
+        groundTextureWidth_ = static_cast<float>(groundTexture_.getSize().x);
+    }
+    if (!grassTexture_.loadFromFile("image/grass.png")) {
+        std::cerr << "警告: 无法加载草贴图 image/grass.png\n";
+    } else {
+        grassTextureWidth_ = static_cast<float>(grassTexture_.getSize().x);
+    }
+    if (!skyTexture_.loadFromFile("image/sky.png")) {
+        std::cerr << "警告: 无法加载天空贴图 image/sky.png\n";
+    } else {
+        skyTextureWidth_ = static_cast<float>(skyTexture_.getSize().x);
+    }
+    
+    // 加载Logo贴图
+    if (!logoTexture_.loadFromFile("image/logo.png")) {
+        std::cerr << "警告: 无法加载Logo贴图 image/logo.png\n";
+    } else {
+        logoSprite_ = sf::Sprite(logoTexture_);
+        // 缩小50%
+        logoSprite_->setScale(sf::Vector2f(0.5f, 0.5f));
+        // 设置Logo位置：在窗口上方居中（考虑缩放后的尺寸）
+        sf::Vector2u logoSize = logoTexture_.getSize();
+        float scaledWidth = static_cast<float>(logoSize.x) * 0.5f;
+        float logoX = (static_cast<float>(config::kWindowWidth) - scaledWidth) * 0.5f;
+        float logoY = 60.0f;  // 距离顶部60像素
+        logoSprite_->setPosition({logoX, logoY});
+    }
+    
+    // 计算地面和草贴图的最小公倍数周期（考虑50%缩放）
+    float groundScaledWidth = groundTextureWidth_ * 0.5f;
+    float grassScaledWidth = grassTextureWidth_ * 0.5f;
+    if (groundScaledWidth > 0.0f && grassScaledWidth > 0.0f) {
+        // 计算最小公倍数：LCM(a, b) = |a * b| / GCD(a, b)
+        float a = groundScaledWidth;
+        float b = grassScaledWidth;
+        // 简化计算：找到最大公约数
+        float gcd = a;
+        float temp = b;
+        while (temp > 0.01f) {  // 浮点数比较，使用小的阈值
+            float remainder = std::fmod(gcd, temp);
+            gcd = temp;
+            temp = remainder;
+        }
+        menuCycleLCM_ = (a * b) / gcd;
+        std::cerr << "地面和草贴图周期 LCM: " << menuCycleLCM_ << " 像素\n";
+    } else {
+        menuCycleLCM_ = static_cast<float>(config::kWindowWidth);  // 备用值
+    }
     
     initAudio();
     initButtons();
@@ -197,6 +262,10 @@ void Game::update(float dt) {
             }
             break;
         case Scene::MainMenu:
+            // 更新主界面动画（无限滚动地面和草 + 视觉小鸟）
+            updateMenuAnimation(dt);
+            updateButtons(dt);
+            break;
         case Scene::LevelSelect:
             updateButtons(dt);
             break;
@@ -229,7 +298,8 @@ void Game::update(float dt) {
             // Also check if mouse is over any button - if so, don't process bird launching
             bool mouseOverButton = false;
             if (!buttonClicked) {
-                sf::Vector2f mousePos = static_cast<sf::Vector2f>(sf::Mouse::getPosition(window_));
+                sf::Vector2i pixelPos = sf::Mouse::getPosition(window_);
+                sf::Vector2f mousePos = window_.mapPixelToCoords(pixelPos);
                 for (const auto& btn : gameButtons_) {
                     if (btn->isHovered()) {
                         mouseOverButton = true;
@@ -311,7 +381,8 @@ void Game::update(float dt) {
                             if (auto* body = draggingBird_->body()) {
                                 dragStart_ = body->position();
                             } else {
-                                dragStart_ = static_cast<sf::Vector2f>(sf::Mouse::getPosition(window_));
+                                sf::Vector2i pixelPos = sf::Mouse::getPosition(window_);
+                                dragStart_ = window_.mapPixelToCoords(pixelPos);
                             }
                             
                             // Play bird select sound when bird is selected (dragging starts)
@@ -339,7 +410,8 @@ void Game::update(float dt) {
                             
                             if (birdStillValid) {
                                 // Update drag position
-                                dragCurrent_ = static_cast<sf::Vector2f>(sf::Mouse::getPosition(window_));
+                                sf::Vector2i pixelPos = sf::Mouse::getPosition(window_);
+                                dragCurrent_ = window_.mapPixelToCoords(pixelPos);
                                 
                                 // Release to launch
                                 if (!mouseDown && prevMouseDown_) {
@@ -371,7 +443,8 @@ void Game::update(float dt) {
                             if (auto* body = draggingBird_->body()) {
                                 dragStart_ = body->position();
                             } else {
-                                dragStart_ = static_cast<sf::Vector2f>(sf::Mouse::getPosition(window_));
+                                sf::Vector2i pixelPos = sf::Mouse::getPosition(window_);
+                                dragStart_ = window_.mapPixelToCoords(pixelPos);
                             }
                         }
                         break;
@@ -387,7 +460,12 @@ void Game::update(float dt) {
                     if (birdBody) {
                         // Calculate pull and initial velocity exactly as in launchCurrentBird()
                         sf::Vector2f pull = dragStart_ - dragCurrent_;
-                        pull = clampVec(pull, config::kMaxPullDistance);
+                        // 对于黄鸟，只在AI模式下允许2倍拉弓距离（手动模式下使用正常距离）
+                        float maxPullDist = config::kMaxPullDistance;
+                        if (draggingBird_->type() == BirdType::Yellow && aiModeEnabled_) {
+                            maxPullDist = config::kMaxPullDistance * 2.0f;
+                        }
+                        pull = clampVec(pull, maxPullDist);
                         // 修正：pull向量指向从拖拽点回到弹弓的方向（向后拉的方向）
                         // 初速度应该指向发射方向（向前，与pull相反），所以应该是pull方向，而不是-pull
                         sf::Vector2f v0 = pull * config::kSlingshotStiffness;
@@ -541,21 +619,43 @@ void Game::update(float dt) {
 }
 
 void Game::render() {
-    window_.clear(sf::Color(180, 220, 255));
-    
-    // Draw background image for Splash and MainMenu scenes
-    if (scene_ == Scene::Splash || scene_ == Scene::MainMenu) {
+    // Draw background based on scene
+    if (scene_ == Scene::Splash) {
+        window_.clear(sf::Color(180, 220, 255));
         if (backgroundSprite_.has_value()) {
             window_.draw(*backgroundSprite_);
         }
+    } else if (scene_ == Scene::Playing || scene_ == Scene::Paused) {
+        // 游戏场景使用sky.png作为背景
+        if (skyTexture_.getSize().x > 0) {
+            // 绘制天空背景，填充整个窗口
+            sf::Sprite skySprite(skyTexture_);
+            sf::Vector2u skySize = skyTexture_.getSize();
+            float windowWidth = static_cast<float>(config::kWindowWidth);
+            float windowHeight = static_cast<float>(config::kWindowHeight);
+            
+            // 计算缩放比例，使天空填充整个窗口
+            float scaleX = windowWidth / static_cast<float>(skySize.x);
+            float scaleY = windowHeight / static_cast<float>(skySize.y);
+            skySprite.setScale(sf::Vector2f(scaleX, scaleY));
+            skySprite.setPosition(sf::Vector2f(0.0f, 0.0f));
+            window_.draw(skySprite);
+        } else {
+            window_.clear(sf::Color(180, 220, 255));
+        }
+    } else {
+        window_.clear(sf::Color(180, 220, 255));
     }
+    // MainMenu scene uses sky.png as background (drawn in renderMenuAnimation)
     
     switch (scene_) {
         case Scene::Splash: {
-            // Splash screen - no text displayed
+            // Splash 场景只显示背景，不显示动画
             break;
         }
         case Scene::MainMenu:
+            // 渲染主界面动画（无限滚动地面和草 + 视觉小鸟）
+            renderMenuAnimation();
             renderMenu();
             // Draw menu buttons
             for (const auto& btn : menuButtons_) {
@@ -576,18 +676,44 @@ void Game::render() {
         case Scene::Playing: {
             // AI visual feedback will be drawn with trajectory preview below
             
-            // Draw visible ground - extend to cover full game world
+            // Draw visible ground using ground.png - extend to cover full game world
             {
                 const float groundLeft = -200.0f;
                 const float groundRight = 1600.0f;
                 const float groundWidth = groundRight - groundLeft;
-                sf::RectangleShape groundShape({groundWidth, 40.0f});
-                groundShape.setOrigin({groundWidth * 0.5f, 20.0f});
-                groundShape.setPosition(
-                    {(groundLeft + groundRight) * 0.5f,
-                     static_cast<float>(config::kWindowHeight) - 10.0f});
-                groundShape.setFillColor(sf::Color(110, 180, 80));
-                window_.draw(groundShape);
+                const float groundHeight = 40.0f;  // 保持与原有高度一致
+                const float groundY = static_cast<float>(config::kWindowHeight) - 10.0f;  // 保持与原有位置一致
+                
+                if (groundTexture_.getSize().x > 0) {
+                    // 使用ground.png贴图
+                    sf::Sprite groundSprite(groundTexture_);
+                    sf::Vector2u groundTexSize = groundTexture_.getSize();
+                    float texWidth = static_cast<float>(groundTexSize.x);
+                    float texHeight = static_cast<float>(groundTexSize.y);
+                    
+                    // 设置纹理为可重复模式
+                    groundTexture_.setRepeated(true);
+                    
+                    // 设置纹理矩形，使用实际地面尺寸（会自动重复）
+                    groundSprite.setTextureRect(sf::IntRect(
+                        sf::Vector2i(0, 0),
+                        sf::Vector2i(static_cast<int>(groundWidth), static_cast<int>(groundHeight))
+                    ));
+                    
+                    // 设置位置和原点
+                    groundSprite.setOrigin(sf::Vector2f(groundWidth * 0.5f, groundHeight * 0.5f));
+                    groundSprite.setPosition(
+                        {(groundLeft + groundRight) * 0.5f, groundY});
+                    
+                    window_.draw(groundSprite);
+                } else {
+                    // 如果贴图加载失败，使用备用颜色块
+                    sf::RectangleShape groundShape({groundWidth, groundHeight});
+                    groundShape.setOrigin({groundWidth * 0.5f, groundHeight * 0.5f});
+                    groundShape.setPosition({(groundLeft + groundRight) * 0.5f, groundY});
+                    groundShape.setFillColor(sf::Color(110, 180, 80));
+                    window_.draw(groundShape);
+                }
             }
             
             // Draw game buttons (restart, next level)
@@ -623,9 +749,10 @@ void Game::render() {
             }
 
             if (launchState_ == LaunchState::Dragging && !birds_.empty()) {
+                sf::Vector2i pixelPos = sf::Mouse::getPosition(window_);
+                dragCurrent_ = window_.mapPixelToCoords(pixelPos);
                 sf::Vertex line[] = {sf::Vertex(dragStart_, sf::Color::Black),
                                      sf::Vertex(dragCurrent_, sf::Color::Black)};
-                dragCurrent_ = static_cast<sf::Vector2f>(sf::Mouse::getPosition(window_));
                 window_.draw(line, 2, sf::PrimitiveType::Lines);
             }
             renderHUD();
@@ -668,18 +795,43 @@ void Game::render() {
         }
         case Scene::Paused:
             // Draw the game scene in the background (frozen)
-            // Draw visible ground - extend to cover full game world
+            // Draw visible ground using ground.png - extend to cover full game world
             {
                 const float groundLeft = -200.0f;
                 const float groundRight = 1600.0f;
                 const float groundWidth = groundRight - groundLeft;
-                sf::RectangleShape groundShape({groundWidth, 40.0f});
-                groundShape.setOrigin({groundWidth * 0.5f, 20.0f});
-                groundShape.setPosition(
-                    {(groundLeft + groundRight) * 0.5f,
-                     static_cast<float>(config::kWindowHeight) - 10.0f});
-                groundShape.setFillColor(sf::Color(110, 180, 80));
-                window_.draw(groundShape);
+                const float groundHeight = 40.0f;  // 保持与原有高度一致
+                const float groundY = static_cast<float>(config::kWindowHeight) - 10.0f;  // 保持与原有位置一致
+                
+                if (groundTexture_.getSize().x > 0) {
+                    // 使用ground.png贴图
+                    sf::Sprite groundSprite(groundTexture_);
+                    sf::Vector2u groundTexSize = groundTexture_.getSize();
+                    float texWidth = static_cast<float>(groundTexSize.x);
+                    float texHeight = static_cast<float>(groundTexSize.y);
+                    
+                    // 设置纹理为可重复模式
+                    groundTexture_.setRepeated(true);
+                    
+                    // 设置纹理矩形，使用实际地面尺寸（会自动重复）
+                    groundSprite.setTextureRect(sf::IntRect(
+                        sf::Vector2i(0, 0),
+                        sf::Vector2i(static_cast<int>(groundWidth), static_cast<int>(groundHeight))
+                    ));
+                    
+                    // 设置位置和原点
+                    groundSprite.setOrigin(sf::Vector2f(groundWidth * 0.5f, groundHeight * 0.5f));
+                    groundSprite.setPosition({(groundLeft + groundRight) * 0.5f, groundY});
+                    
+                    window_.draw(groundSprite);
+                } else {
+                    // 如果贴图加载失败，使用备用颜色块
+                    sf::RectangleShape groundShape({groundWidth, groundHeight});
+                    groundShape.setOrigin({groundWidth * 0.5f, groundHeight * 0.5f});
+                    groundShape.setPosition({(groundLeft + groundRight) * 0.5f, groundY});
+                    groundShape.setFillColor(sf::Color(110, 180, 80));
+                    window_.draw(groundShape);
+                }
             }
             
             // Draw slingshot
@@ -900,9 +1052,10 @@ void Game::launchCurrentBird() {
     
     sf::Vector2f pull = dragStart_ - dragCurrent_;
     
-    // 对于黄鸟，允许更大的拉弓距离（2倍）以实现2倍速度
+    // 对于黄鸟，只在AI模式下允许更大的拉弓距离（2倍）
+    // 手动模式下使用正常距离，技能激活后速度才翻倍
     float maxPullDist = config::kMaxPullDistance;
-    if (birdToLaunch->type() == BirdType::Yellow) {
+    if (birdToLaunch->type() == BirdType::Yellow && aiModeEnabled_) {
         maxPullDist = config::kMaxPullDistance * 2.0f;
     }
     pull = clampVec(pull, maxPullDist);
@@ -1180,7 +1333,9 @@ void Game::initButtons() {
 }
 
 void Game::updateButtons(float dt) {
-    sf::Vector2f mousePos = static_cast<sf::Vector2f>(sf::Mouse::getPosition(window_));
+    // 使用 mapPixelToCoords 将鼠标像素坐标转换为窗口坐标，正确处理窗口缩放
+    sf::Vector2i pixelPos = sf::Mouse::getPosition(window_);
+    sf::Vector2f mousePos = window_.mapPixelToCoords(pixelPos);
     bool mousePressed = sf::Mouse::isButtonPressed(sf::Mouse::Button::Left);
     
     // Update buttons based on current scene
@@ -1459,6 +1614,240 @@ void Game::renderDebugCollisionBoxes() {
                 window_.draw(debugCircle);
             }
         }
+    }
+}
+
+// ===================== 主界面动画 =====================
+
+void Game::updateMenuAnimation(float dt) {
+    // 地面向左无限滚动
+    menuGroundOffset_ -= menuGroundSpeed_ * dt;
+    
+    // 天空向左无限滚动（速度为地面的1/2）
+    float skySpeed = menuGroundSpeed_ * 0.5f;
+    menuSkyOffset_ -= skySpeed * dt;
+    
+    // 使用模运算来保持偏移量在合理范围内，避免数值过大
+    // 使用最小公倍数周期进行模运算，确保地面和草同步
+    if (menuCycleLCM_ > 0.0f) {
+        // 使用模运算确保偏移量在 [-menuCycleLCM_, 0) 范围内
+        while (menuGroundOffset_ < -menuCycleLCM_) {
+            menuGroundOffset_ += menuCycleLCM_;
+        }
+    } else {
+        // 如果没有计算LCM，使用窗口宽度作为备用
+        float cycleWidth = static_cast<float>(config::kWindowWidth);
+        while (menuGroundOffset_ < -cycleWidth) {
+            menuGroundOffset_ += cycleWidth;
+        }
+    }
+    
+    // 天空偏移量重置：确保天空移动了一整个窗口宽度后才重置
+    // 这样无论天空图片宽度是多少，都能确保重置时位置一致
+    float windowWidth = static_cast<float>(config::kWindowWidth);
+    while (menuSkyOffset_ < -windowWidth) {
+        menuSkyOffset_ += windowWidth;
+    }
+
+    // 生成视觉小鸟（不参与物理、无声音）
+    static std::mt19937 rng{std::random_device{}()};
+    static std::uniform_real_distribution<float> spawnIntervalDist(0.8f, 2.0f);   // 间隔 0.8~2 秒
+    static std::uniform_real_distribution<float> startXDist(80.0f, 720.0f);       // 出现的水平位置
+    static std::uniform_real_distribution<float> speedDist(480.0f, 680.0f);       // 初速度大小（减小20%）
+    static std::uniform_real_distribution<float> angleDegDist(30.0f, 60.0f);       // 至少30度向上发射（30-60度）
+    static std::uniform_int_distribution<int> birdTypeDist(0, 2);                 // 0 红 1 黄 2 黑
+
+    menuBirdSpawnAccum_ += dt;
+    static float nextSpawn = spawnIntervalDist(rng);
+    if (menuBirdSpawnAccum_ >= nextSpawn) {
+        menuBirdSpawnAccum_ = 0.0f;
+        nextSpawn = spawnIntervalDist(rng);
+
+        // 选择贴图
+        const sf::Texture* tex = nullptr;
+        switch (birdTypeDist(rng)) {
+            case 0: tex = splashBirdRedTexture_.getSize().x ? &splashBirdRedTexture_ : nullptr; break;
+            case 1: tex = splashBirdYellowTexture_.getSize().x ? &splashBirdYellowTexture_ : nullptr; break;
+            case 2: tex = splashBirdBlackTexture_.getSize().x ? &splashBirdBlackTexture_ : nullptr; break;
+        }
+
+        if (!tex) {
+            // 对应贴图加载失败则跳过本次生成
+            return;
+        }
+
+        SplashBirdVisual bird(*tex);
+
+        // 把小鸟放在地板上层往下30像素的位置，向上发射
+        float groundTextureHeight = groundTextureWidth_ > 0.0f ? static_cast<float>(groundTexture_.getSize().y) * 0.5f : 80.0f;  // 考虑50%缩放
+        float groundTopY = static_cast<float>(config::kWindowHeight) - groundTextureHeight;  // 地面上表面
+        const float launchY = groundTopY - 30.0f;  // 地板上层往下30像素
+        float startX = startXDist(rng);
+        bird.sprite.setPosition({startX, launchY});
+        sf::FloatRect local = bird.sprite.getLocalBounds();
+        bird.sprite.setOrigin({local.size.x * 0.5f, local.size.y * 0.5f});
+
+        float speed = speedDist(rng);
+        float angleDeg = angleDegDist(rng);  // 至少30度向上
+        float rad = angleDeg * 3.14159265f / 180.0f;
+        bird.velocity.x = std::cos(rad) * speed;   // 固定向右飞
+        bird.velocity.y = -std::sin(rad) * speed;  // 向上发射（注意负号，因为Y轴向下）
+
+        menuBirds_.push_back(std::move(bird));
+    }
+
+    // 更新小鸟位置，加入简单"重力"让其自然落下
+    const float gravity = 260.0f;  // 像素/秒²，纯视觉
+    for (auto& b : menuBirds_) {
+        b.velocity.y += gravity * dt;
+        b.sprite.move(b.velocity * dt);
+    }
+
+    // 移除飞出屏幕太久的小鸟
+    const float bottomLimit = static_cast<float>(config::kWindowHeight) + 80.0f;
+    menuBirds_.erase(
+        std::remove_if(menuBirds_.begin(), menuBirds_.end(),
+                       [bottomLimit](const SplashBirdVisual& b) {
+                           return b.sprite.getPosition().y > bottomLimit ||
+                                  b.sprite.getPosition().x > static_cast<float>(config::kWindowWidth) + 80.0f;
+                       }),
+        menuBirds_.end());
+}
+
+void Game::renderMenuAnimation() {
+    const float windowWidth = static_cast<float>(config::kWindowWidth);
+    const float windowHeight = static_cast<float>(config::kWindowHeight);
+    
+    // 地面贴图底部对齐窗口底部（贴图缩小50%）
+    float groundTextureHeight = groundTextureWidth_ > 0.0f ? static_cast<float>(groundTexture_.getSize().y) * 0.5f : 0.0f;
+    float grassTextureHeight = grassTextureWidth_ > 0.0f ? static_cast<float>(grassTexture_.getSize().y) * 0.5f : 0.0f;
+    
+    // 地面底部在窗口底部
+    float groundBottomY = windowHeight;
+    float groundTopY = groundBottomY - groundTextureHeight;
+    
+    // 草底部与地面上端无缝衔接
+    float grassBottomY = groundTopY;
+    float grassTopY = grassBottomY - grassTextureHeight;
+    
+    // 使用贴图宽度进行循环拼接（考虑50%缩放），如果没有加载贴图则使用窗口宽度
+    float groundCycleWidth = groundTextureWidth_ > 0.0f ? groundTextureWidth_ * 0.5f : windowWidth;
+    float grassCycleWidth = grassTextureWidth_ > 0.0f ? grassTextureWidth_ * 0.5f : windowWidth;
+    
+    // ========== 绘制天空背景（最先绘制，置底） ==========
+    if (skyTextureWidth_ > 0.0f) {
+        // 计算天空需要覆盖的高度：从地面上方到窗口顶部
+        float skyTopY = 0.0f;
+        float skyBottomY = groundTopY;
+        float skyHeight = skyBottomY - skyTopY;
+        
+        // 获取天空贴图的原始尺寸
+        float skyOriginalWidth = static_cast<float>(skyTexture_.getSize().x);
+        float skyOriginalHeight = static_cast<float>(skyTexture_.getSize().y);
+        
+        // 计算缩放比例，使天空贴图完全覆盖从地面上方到窗口顶部的部分
+        float skyScaleY = skyHeight / skyOriginalHeight;
+        float skyScaleX = skyScaleY;  // 保持宽高比
+        float skyScaledWidth = skyOriginalWidth * skyScaleX;
+        
+        // 使用模运算确保贴图位置正确，基于天空贴图宽度进行归一化
+        float normalizedSkyOffset = std::fmod(menuSkyOffset_, skyScaledWidth);
+        if (normalizedSkyOffset < 0.0f) {
+            normalizedSkyOffset += skyScaledWidth;
+        }
+        
+        // 计算需要绘制多少个天空贴图才能覆盖整个屏幕
+        int skyTilesNeeded = static_cast<int>(std::ceil(windowWidth / skyScaledWidth)) + 2;
+        
+        // 绘制所有需要的天空贴图
+        for (int i = -1; i < skyTilesNeeded; ++i) {
+            float tileX = normalizedSkyOffset + i * skyScaledWidth;
+            // 只绘制在屏幕可见范围内的贴图
+            if (tileX + skyScaledWidth >= -skyScaledWidth && tileX < windowWidth + skyScaledWidth) {
+                sf::Sprite skySprite(skyTexture_);
+                skySprite.setScale(sf::Vector2f(skyScaleX, skyScaleY));
+                skySprite.setPosition({tileX, skyTopY});
+                window_.draw(skySprite);
+            }
+        }
+    }
+    
+    // ========== 绘制Logo（在天空之后，鸟之前） ==========
+    if (logoSprite_.has_value()) {
+        window_.draw(*logoSprite_);
+    }
+    
+    // 计算需要绘制多少个贴图才能覆盖整个屏幕（包括左右各一个额外的用于无缝循环）
+    // 增加循环范围，确保地面贴图始终覆盖整个屏幕，即使偏移量很大时也不会消失
+    int groundTilesNeeded = static_cast<int>(std::ceil(windowWidth / groundCycleWidth)) + 4;
+    int grassTilesNeeded = static_cast<int>(std::ceil(windowWidth / grassCycleWidth)) + 4;
+    
+    // 先绘制视觉小鸟（在地面之前绘制，这样地面可以遮挡小鸟的下半部分）
+    for (auto& b : menuBirds_) {
+        window_.draw(b.sprite);
+    }
+    
+    // 绘制地面贴图（无限拼接，缩小50%，在地面之后绘制以遮挡小鸟）
+    if (groundTextureWidth_ > 0.0f) {
+        // 使用模运算确保贴图位置正确，基于地面贴图宽度进行归一化
+        float normalizedOffset = std::fmod(menuGroundOffset_, groundCycleWidth);
+        if (normalizedOffset < 0.0f) {
+            normalizedOffset += groundCycleWidth;
+        }
+        
+        // 计算起始贴图索引，确保覆盖整个屏幕（扩大范围以确保覆盖）
+        int startIndex = static_cast<int>(std::floor((0.0f - normalizedOffset) / groundCycleWidth)) - 2;
+        int endIndex = static_cast<int>(std::ceil((windowWidth - normalizedOffset) / groundCycleWidth)) + 2;
+        
+        // 绘制所有需要的地面贴图
+        for (int i = startIndex; i <= endIndex; ++i) {
+            float tileX = normalizedOffset + i * groundCycleWidth;
+            // 只绘制在屏幕可见范围内的贴图（扩大范围以确保覆盖）
+            if (tileX + groundCycleWidth >= -groundCycleWidth * 2.0f && tileX < windowWidth + groundCycleWidth * 2.0f) {
+                sf::Sprite groundSprite(groundTexture_);
+                groundSprite.setScale(sf::Vector2f(0.5f, 0.5f));  // 缩小50%
+                groundSprite.setPosition({tileX, groundTopY});
+                window_.draw(groundSprite);
+            }
+        }
+    } else {
+        // 如果没有加载地面贴图，使用备用颜色块
+        sf::RectangleShape fallback({windowWidth, groundTextureHeight > 0 ? groundTextureHeight : 80.0f});
+        fallback.setPosition({0.0f, groundTopY});
+        fallback.setFillColor(sf::Color(139, 101, 67));
+        window_.draw(fallback);
+    }
+    
+    // 绘制草贴图（无限拼接，地面上方无缝衔接，缩小50%，最后绘制以遮挡小鸟）
+    if (grassTextureWidth_ > 0.0f) {
+        // 使用模运算确保贴图位置正确，基于草贴图宽度进行归一化
+        // 使用与地面相同的偏移量 menuGroundOffset_，但基于草贴图宽度归一化
+        float normalizedOffset = std::fmod(menuGroundOffset_, grassCycleWidth);
+        if (normalizedOffset < 0.0f) {
+            normalizedOffset += grassCycleWidth;
+        }
+        
+        // 计算起始贴图索引，确保覆盖整个屏幕（扩大范围以确保覆盖）
+        int startIndex = static_cast<int>(std::floor((0.0f - normalizedOffset) / grassCycleWidth)) - 2;
+        int endIndex = static_cast<int>(std::ceil((windowWidth - normalizedOffset) / grassCycleWidth)) + 2;
+        
+        // 绘制所有需要的草贴图
+        for (int i = startIndex; i <= endIndex; ++i) {
+            float tileX = normalizedOffset + i * grassCycleWidth;
+            // 只绘制在屏幕可见范围内的贴图（扩大范围以确保覆盖）
+            if (tileX + grassCycleWidth >= -grassCycleWidth * 2.0f && tileX < windowWidth + grassCycleWidth * 2.0f) {
+                sf::Sprite grassSprite(grassTexture_);
+                grassSprite.setScale(sf::Vector2f(0.5f, 0.5f));  // 缩小50%
+                grassSprite.setPosition({tileX, grassTopY});
+                window_.draw(grassSprite);
+            }
+        }
+    } else {
+        // 如果没有加载草贴图，使用备用颜色块
+        sf::RectangleShape fallback({windowWidth, grassTextureHeight > 0 ? grassTextureHeight : 30.0f});
+        fallback.setPosition({0.0f, grassTopY});
+        fallback.setFillColor(sf::Color(60, 170, 80));
+        window_.draw(fallback);
     }
 }
 

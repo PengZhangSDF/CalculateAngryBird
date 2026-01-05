@@ -45,9 +45,15 @@ public:
     void takeDamage(float damage);  // Apply damage to block
 
 private:
+    void loadTexture();  // Load texture based on material type
+    void updateTextureRect();  // Update texture rect for tiling/cropping
+    
     Material material_;
     PhysicsBody body_;
-    sf::RectangleShape shape_;
+    sf::Vector2f size_;  // Store block size for texture calculations
+    sf::RectangleShape shape_;  // Fallback shape (if texture fails)
+    std::optional<sf::Sprite> sprite_;  // Texture sprite
+    sf::Texture texture_;  // Block texture
     float age_{0.0f};
     int hp_{100};  // Health points
     int maxHp_{100};  // Maximum health points

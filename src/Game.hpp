@@ -19,6 +19,16 @@
 class LevelEditor;
 class AIController;
 
+// 开屏动画中的简易小鸟数据（只做纯视觉用，不参与物理）
+struct SplashBirdVisual {
+    sf::Sprite sprite;
+    sf::Vector2f velocity;  // 像素/秒
+
+    // SFML 3.0 的 Sprite 需要纹理才能构造，提供一个显式构造函数
+    explicit SplashBirdVisual(const sf::Texture& texture)
+        : sprite(texture), velocity(0.0f, 0.0f) {}
+};
+
 enum class Scene {
     Splash,
     MainMenu,
@@ -49,6 +59,10 @@ private:
     void renderPauseMenu();
     void renderDebugCollisionBoxes();  // Debug: draw collision boxes
 
+    // 主界面动画逻辑（无限滚动地面和草）
+    void updateMenuAnimation(float dt);
+    void renderMenuAnimation();
+
     void loadLevel(int index);
     void resetCurrent();
     void launchCurrentBird();
@@ -63,8 +77,21 @@ private:
     std::optional<sf::Sprite> winBackgroundSprite_;  // Win screen background sprite
     sf::Texture slingshotTexture_;  // Slingshot texture
     std::optional<sf::Sprite> slingshotSprite_;  // Slingshot sprite (optional because SFML 3.0 requires texture for construction)
+    
+    // Splash 场景用的小鸟贴图（只用于视觉，不参与物理/声音）
+    sf::Texture splashBirdRedTexture_;
+    sf::Texture splashBirdYellowTexture_;
+    sf::Texture splashBirdBlackTexture_;
+    
+    // 主界面动画用的地面和草贴图（无限拼接）
+    sf::Texture groundTexture_;   // 地面贴图
+    sf::Texture grassTexture_;    // 草贴图
+    sf::Texture skyTexture_;      // 天空贴图（主界面背景）
+    sf::Texture logoTexture_;     // Logo贴图
+    std::optional<sf::Sprite> logoSprite_;  // Logo精灵
+
     Scene scene_{Scene::Splash};
-    float splashTimer_{1.0f};
+    float splashTimer_{3.0f};  // 开屏动画时长（秒），后续可调
     float gameTime_{0.0f};  // Total game time for bird launch cooldown
 
     LevelLoader levelLoader_;
@@ -102,6 +129,17 @@ private:
 
     // Trajectory preview
     std::vector<sf::Vertex> previewPath_;
+
+    // 主界面动画状态（无限滚动地面和草 + 纯视觉小鸟）
+    float menuGroundOffset_{0.0f};          // 地面水平偏移
+    float menuGroundSpeed_{80.0f};          // 地面向左移动速度（像素/秒）
+    float menuSkyOffset_{0.0f};             // 天空水平偏移
+    float menuBirdSpawnAccum_{0.0f};        // 生成小鸟的时间累积
+    std::vector<SplashBirdVisual> menuBirds_;  // 当前在屏幕上的视觉小鸟
+    float groundTextureWidth_{0.0f};        // 地面贴图宽度（用于无限拼接）
+    float grassTextureWidth_{0.0f};         // 草贴图宽度（用于无限拼接）
+    float skyTextureWidth_{0.0f};           // 天空贴图宽度（用于无限拼接）
+    float menuCycleLCM_{0.0f};              // 地面和草贴图的最小公倍数周期（用于同步重置）
     
     // UI Buttons
     std::vector<std::unique_ptr<Button>> menuButtons_;

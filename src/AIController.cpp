@@ -676,10 +676,10 @@ TrajectoryResult AIController::calculateYellowBirdTrajectory(const sf::Vector2f&
     const int maxSteps = static_cast<int>(maxTime / dt);
     float currentTime = 0.0f;
     
-    // 黄鸟技能立即激活（开局释放技能），速度直接翻倍
-    // 注意：初始速度已经是1000（kYellowInitialMax * 2.0f），因为可以拉2倍距离
-    // 技能激活后，速度翻倍，但受限于kYellowMaxSpeed = 1500
-    // 根据Bird::activateSkill()，速度翻倍但不超过maxSpeed_
+    // 黄鸟技能立即激活（AI模式下立即激活）
+    // 注意：AI计算时假设初始速度可达1000（kYellowInitialMax * 2.0f），但实际发射时
+    // Bird::launch()会将速度限制为500，然后activateSkill()立即翻倍到1000
+    // 技能激活后，速度翻倍但受限于kYellowMaxSpeed = 1500
     bool skillActivated = true;  // 立即激活
     float maxSpeed = config::bird_speed::kYellowMaxSpeed;  // 技能后最大速度：1500
     
@@ -829,9 +829,10 @@ AimingInfo AIController::optimizeLaunchParameters(BirdType birdType,
             maxSpeed = config::bird_speed::kRedMaxSpeed;
             break;
         case BirdType::Yellow:
-            // 黄鸟允许2倍拉弓距离，且Bird::launch()中使用2倍初始速度限制
-            // 实际最大初始速度 = kYellowInitialMax * 2.0f = 500 * 2 = 1000
-            baseMaxSpeed = config::bird_speed::kYellowInitialMax * 2.0f;  // 初始发射速度限制：1000
+            // 黄鸟在AI模式下允许2倍拉弓距离，但实际发射速度仍限制为kYellowInitialMax (500)
+            // 然后立即激活技能，速度翻倍到1000（但受限于kYellowMaxSpeed = 1500）
+            // AI计算时使用2倍速度假设，以模拟技能激活后的效果
+            baseMaxSpeed = config::bird_speed::kYellowInitialMax * 2.0f;  // AI计算用：假设初始速度可达1000
             maxSpeed = config::bird_speed::kYellowMaxSpeed;                // 技能后速度：1500
             useSkill = true;  // 黄鸟默认使用技能
             break;
@@ -1003,9 +1004,9 @@ sf::Vector2f AIController::velocityFromAngleAndPower(float angle, float power, B
             maxSpeed = config::bird_speed::kRedInitialMax;
             break;
         case BirdType::Yellow:
-            // 黄鸟允许2倍拉弓距离，且Bird::launch()中使用2倍初始速度限制
-            // 实际最大初始速度 = kYellowInitialMax * 2.0f = 500 * 2 = 1000
-            maxSpeed = config::bird_speed::kYellowInitialMax * 2.0f;  // 使用2倍初始速度限制：1000
+            // 黄鸟在AI模式下允许2倍拉弓距离，但实际发射速度仍限制为kYellowInitialMax (500)
+            // 然后立即激活技能，速度翻倍。AI计算时使用2倍速度假设，以模拟技能激活后的效果
+            maxSpeed = config::bird_speed::kYellowInitialMax * 2.0f;  // AI计算用：假设初始速度可达1000
             break;
         case BirdType::Bomb:
             maxSpeed = config::bird_speed::kBombInitialMax;
