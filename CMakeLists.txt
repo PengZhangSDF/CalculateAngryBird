@@ -214,3 +214,59 @@ if(MINGW)
         message(WARNING "未找到SFML DLL目录，请手动复制SFML DLL到输出目录")
     endif()
 endif()
+
+# ========== 9. 自动从 Windows 字体目录复制所需字体到程序目录 ==========
+# 说明：
+#   - 程序运行时从相对路径 fonts/*.ttc / fonts/*.ttf 加载字体
+#   - 这里在构建后自动将常用字体从 C:/Windows/Fonts 复制到可执行文件所在目录的 fonts 子目录
+if(WIN32)
+    # 目标字体输出目录：与 exe 同级的 fonts 子目录
+    set(FONT_OUTPUT_DIR "$<TARGET_FILE_DIR:${PROJECT_NAME}>/fonts")
+
+    # 创建 fonts 目录
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${FONT_OUTPUT_DIR}"
+        COMMENT "Creating fonts directory..."
+    )
+
+    # 定义要复制的字体源路径（Windows 系统字体）
+    set(WIN_FONT_MS_YAHEI "C:/Windows/Fonts/msyh.ttc")
+    set(WIN_FONT_SIMHEI  "C:/Windows/Fonts/simhei.ttf")
+    set(WIN_FONT_ARIAL   "C:/Windows/Fonts/arial.ttf")
+
+    # 微软雅黑
+    if(EXISTS "${WIN_FONT_MS_YAHEI}")
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${WIN_FONT_MS_YAHEI}"
+                    "${FONT_OUTPUT_DIR}/msyh.ttc"
+            COMMENT "Copying font msyh.ttc from Windows fonts..."
+        )
+    else()
+        message(WARNING "未找到 C:/Windows/Fonts/msyh.ttc，将尝试使用其他字体")
+    endif()
+
+    # 黑体
+    if(EXISTS "${WIN_FONT_SIMHEI}")
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${WIN_FONT_SIMHEI}"
+                    "${FONT_OUTPUT_DIR}/simhei.ttf"
+            COMMENT "Copying font simhei.ttf from Windows fonts..."
+        )
+    else()
+        message(WARNING "未找到 C:/Windows/Fonts/simhei.ttf，将尝试使用其他字体")
+    endif()
+
+    # Arial 兜底
+    if(EXISTS "${WIN_FONT_ARIAL}")
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${WIN_FONT_ARIAL}"
+                    "${FONT_OUTPUT_DIR}/arial.ttf"
+            COMMENT "Copying font arial.ttf from Windows fonts..."
+        )
+    else()
+        message(WARNING "未找到 C:/Windows/Fonts/arial.ttf，英文字体兜底可能不可用")
+    endif()
+endif()

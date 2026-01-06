@@ -35,10 +35,11 @@ namespace bird_speed {
 // ======= 关卡与资源路径配置 =======
 // 关卡文件所在目录，相对于可执行文件工作目录（示例：build/bin）。
 constexpr const char* kLevelDirectory = "levels";
-// 字体搜索顺序（Windows）：优先中文字体，避免中文乱码。
-constexpr const char* kFontPathPrimary = "C:/Windows/Fonts/msyh.ttc";     // 微软雅黑 (常见中文字体)
-constexpr const char* kFontPathSecondary = "C:/Windows/Fonts/simhei.ttf"; // 黑体
-constexpr const char* kFontPathFallback = "C:/Windows/Fonts/arial.ttf";   // 仅作最后兜底
+// 字体搜索顺序：优先使用程序工作目录下的字体文件（由 CMake 从 Windows 字体目录自动复制）
+// 注意：这些路径都是相对于可执行文件所在目录（通常是 build/bin）
+constexpr const char* kFontPathPrimary   = "fonts/msyh.ttc";   // 微软雅黑
+constexpr const char* kFontPathSecondary = "fonts/simhei.ttf"; // 黑体
+constexpr const char* kFontPathFallback  = "fonts/arial.ttf";  // 英文字体兜底
 
 // ======= 窗口与显示配置 =======
 // 窗口宽高（像素），增大可以显示更多关卡内容。
