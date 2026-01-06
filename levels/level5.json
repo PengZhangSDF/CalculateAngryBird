@@ -1,0 +1,35 @@
+{
+  "id": 1,
+  "targetScore": 5000,
+  "slingshot": {"x": 361, "y": 1026},
+  "birds": [
+    {"type": "red", "x": 328, "y": 1036},
+    {"type": "red", "x": 287, "y": 1036},
+    {"type": "yellow", "x": 249, "y": 1036},
+    {"type": "yellow", "x": 211, "y": 1035},
+    {"type": "bomb", "x": 171, "y": 1036},
+    {"type": "bomb", "x": 136, "y": 1036}
+  ],
+  "blocks": [
+    {"material": "stoneslab", "x": 922, "y": 1009, "width": -120, "height": 30},
+    {"material": "stoneslab", "x": 1043, "y": 1009, "width": -120, "height": 30},
+    {"material": "stoneslab", "x": 1164, "y": 1009, "width": -120, "height": 30},
+    {"material": "stoneslab", "x": 1292, "y": 1009, "width": -120, "height": 30},
+    {"material": "wood", "x": 756, "y": 919, "width": -30, "height": 120},
+    {"material": "wood", "x": 1055, "y": 979, "width": -120, "height": 30},
+    {"material": "wood", "x": 1294, "y": 979, "width": -120, "height": 30},
+    {"material": "glass", "x": 1048, "y": 828, "width": -30, "height": 120},
+    {"material": "glass", "x": 890, "y": 859, "width": -30, "height": 150},
+    {"material": "stone", "x": 1127, "y": 867, "width": -30, "height": 50},
+    {"material": "wood", "x": 1083, "y": 948, "width": -120, "height": 30},
+    {"material": "wood", "x": 1270, "y": 948, "width": -120, "height": 30},
+    {"material": "wood", "x": 1172, "y": 918, "width": -120, "height": 30}
+  ],
+  "pigs": [
+    {"type": "normal", "x": 605, "y": 1019},
+    {"type": "normal", "x": 740, "y": 899},
+    {"type": "normal", "x": 1033, "y": 807},
+    {"type": "small", "x": 879, "y": 842},
+    {"type": "king", "x": 1114, "y": 983}
+  ]
+}

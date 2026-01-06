@@ -1,0 +1,45 @@
+{
+  "id": 1,
+  "targetScore": 5000,
+  "slingshot": {"x": 335, "y": 959},
+  "birds": [
+    {"type": "red", "x": 302, "y": 960},
+    {"type": "red", "x": 265, "y": 961},
+    {"type": "yellow", "x": 211, "y": 989},
+    {"type": "yellow", "x": 174, "y": 995},
+    {"type": "bomb", "x": 139, "y": 996},
+    {"type": "bomb", "x": 106, "y": 992},
+    {"type": "red", "x": 68, "y": 991},
+    {"type": "yellow", "x": 26, "y": 1027}
+  ],
+  "blocks": [
+    {"material": "stone", "x": 801, "y": 1009, "width": -120, "height": 30},
+    {"material": "stone", "x": 921, "y": 1009, "width": -120, "height": 30},
+    {"material": "stone", "x": 1042, "y": 1009, "width": -120, "height": 30},
+    {"material": "stone", "x": 1163, "y": 1009, "width": -120, "height": 30},
+    {"material": "stone", "x": 1283, "y": 1009, "width": -120, "height": 30},
+    {"material": "stoneslab", "x": 774, "y": 919, "width": -30, "height": 90},
+    {"material": "stoneslab", "x": 996, "y": 919, "width": -30, "height": 90},
+    {"material": "stoneslab", "x": 1215, "y": 919, "width": -30, "height": 90},
+    {"material": "wood", "x": 1230, "y": 888, "width": -499, "height": 30},
+    {"material": "wood", "x": 775, "y": 798, "width": -30, "height": 90},
+    {"material": "wood", "x": 987, "y": 798, "width": -30, "height": 90},
+    {"material": "wood", "x": 1211, "y": 798, "width": -30, "height": 90},
+    {"material": "glass", "x": 816, "y": 767, "width": -120, "height": 30},
+    {"material": "glass", "x": 1029, "y": 767, "width": -120, "height": 30},
+    {"material": "stone", "x": 967, "y": 737, "width": -300, "height": 30},
+    {"material": "stone", "x": 1268, "y": 737, "width": -300, "height": 30},
+    {"material": "glass", "x": 1255, "y": 767, "width": -120, "height": 30},
+    {"material": "stone", "x": 420, "y": 1009, "width": -120, "height": 30},
+    {"material": "stone", "x": 299, "y": 1009, "width": -120, "height": 30},
+    {"material": "stone", "x": 175, "y": 1009, "width": -120, "height": 30},
+    {"material": "stone", "x": 355, "y": 979, "width": -120, "height": 30}
+  ],
+  "pigs": [
+    {"type": "normal", "x": 826, "y": 989},
+    {"type": "normal", "x": 915, "y": 989},
+    {"type": "normal", "x": 1122, "y": 989},
+    {"type": "king", "x": 861, "y": 862},
+    {"type": "king", "x": 1116, "y": 862}
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "id": 1,
+  "targetScore": 5000,
+  "slingshot": {"x": 607, "y": 473},
+  "birds": [
+    {"type": "red", "x": 538, "y": 490},
+    {"type": "red", "x": 486, "y": 488},
+    {"type": "bomb", "x": 426, "y": 481},
+    {"type": "bomb", "x": 365, "y": 480},
+    {"type": "bomb", "x": 300, "y": 486}
+  ],
+  "blocks": [
+    {"material": "stone", "x": 1122, "y": 1009, "width": -120, "height": 30},
+    {"material": "stone", "x": 1242, "y": 1009, "width": -120, "height": 30},
+    {"material": "stone", "x": 1363, "y": 1009, "width": -120, "height": 30},
+    {"material": "stone", "x": 1273, "y": 858, "width": -249, "height": 30},
+    {"material": "stone", "x": 1263, "y": 889, "width": -30, "height": 120},
+    {"material": "stone", "x": 1063, "y": 888, "width": -30, "height": 120},
+    {"material": "stone", "x": 1167, "y": 888, "width": -30, "height": 120},
+    {"material": "wood", "x": 926, "y": 1009, "width": -120, "height": 30},
+    {"material": "wood", "x": 928, "y": 979, "width": -120, "height": 30},
+    {"material": "wood", "x": 1536, "y": 1009, "width": -120, "height": 30},
+    {"material": "wood", "x": 1538, "y": 979, "width": -120, "height": 30},
+    {"material": "wood", "x": 931, "y": 948, "width": -120, "height": 30},
+    {"material": "wood", "x": 933, "y": 918, "width": -120, "height": 30},
+    {"material": "wood", "x": 934, "y": 887, "width": -120, "height": 30},
+    {"material": "wood", "x": 935, "y": 857, "width": -120, "height": 30},
+    {"material": "wood", "x": 1525, "y": 826, "width": -120, "height": 30},
+    {"material": "wood", "x": 1522, "y": 857, "width": -120, "height": 30},
+    {"material": "wood", "x": 1518, "y": 887, "width": -120, "height": 30},
+    {"material": "wood", "x": 1523, "y": 918, "width": -120, "height": 30},
+    {"material": "wood", "x": 1524, "y": 948, "width": -120, "height": 30},
+    {"material": "wood", "x": 936, "y": 826, "width": -120, "height": 30},
+    {"material": "glass", "x": 1421, "y": 796, "width": -499, "height": 30},
+    {"material": "wood", "x": 291, "y": 539, "width": -50, "height": 499},
+    {"material": "wood", "x": 509, "y": 539, "width": -30, "height": 499},
+    {"material": "wood", "x": 607, "y": 508, "width": -499, "height": 30},
+    {"material": "wood", "x": -58, "y": 1009, "width": -120, "height": 30}
+  ],
+  "pigs": [
+    {"type": "small", "x": 968, "y": 1023},
+    {"type": "small", "x": 1387, "y": 1023},
+    {"type": "king", "x": 1100, "y": 983},
+    {"type": "king", "x": 1193, "y": 983}
+  ]
+}
