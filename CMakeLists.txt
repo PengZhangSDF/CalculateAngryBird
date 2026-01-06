@@ -16,15 +16,14 @@ set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 # 设置静态链接标志，避免依赖DLL
 if(MINGW)
     # 完全静态链接：包括libgcc、libstdc++、pthread等
-    # 注意：-static标志会尝试静态链接所有库，但某些库可能没有静态版本
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static-libgcc -static-libstdc++ -static -Wl,-Bstatic")
+    # 注意：exe本身可能仍需要libwinpthread-1.dll，因为SFML DLL依赖它
+    # 但我们可以尽量静态链接exe本身
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static-libgcc -static-libstdc++")
     set(CMAKE_FIND_LIBRARY_SUFFIXES ".a" ".lib")
     set(BUILD_SHARED_LIBS OFF)
-    # 静态链接pthread
-    set(CMAKE_THREAD_LIBS_INIT "-lpthread")
     # 强制使用静态版本的stdc++
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -static-libstdc++")
-    message(STATUS "使用完全静态链接模式")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -static-libgcc -static-libstdc++")
+    message(STATUS "使用静态链接模式（libgcc、libstdc++），pthread和SFML依赖的DLL需要单独复制")
 endif()
 
 # ========== 1. Box2D 2.4.1 配置（回归手动方式，适配老版本） ==========
@@ -142,12 +141,13 @@ else()
     )
 endif()
 
-# ========== 8. DLL复制（仅复制SFML DLL，SDL2和SDL2_ttf使用静态库） ==========
+# ========== 8. DLL复制（仅复制SFML DLL及其依赖，SDL2和SDL2_ttf使用静态库） ==========
 if(MINGW)
     # 只复制SFML的DLL（因为SFML使用动态链接）
     # SDL2和SDL2_ttf使用静态库，不需要DLL
     set(SFML_BIN_DIR "D:/mingw64/SFML-3.0.2/bin")
     if(EXISTS "${SFML_BIN_DIR}/sfml-graphics-3.dll")
+        # 复制SFML核心DLL
         add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${SFML_BIN_DIR}/sfml-graphics-3.dll"
@@ -172,7 +172,44 @@ if(MINGW)
                 $<TARGET_FILE_DIR:${PROJECT_NAME}>
                 COMMENT "Copying SFML System DLL..."
         )
-        message(STATUS "SDL2和SDL2_ttf使用静态链接，SFML使用动态链接（需要DLL）")
+        
+        # 复制MinGW运行时DLL（SFML DLL依赖这些）
+        # 这些DLL是MinGW编译器提供的，必须与exe一起分发
+        set(MINGW_BIN_DIR "D:/mingw64/bin")
+        
+        if(EXISTS "${MINGW_BIN_DIR}/libgcc_s_seh-1.dll")
+            add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${MINGW_BIN_DIR}/libgcc_s_seh-1.dll"
+                    $<TARGET_FILE_DIR:${PROJECT_NAME}>
+                    COMMENT "Copying libgcc_s_seh-1.dll..."
+            )
+        else()
+            message(WARNING "未找到 libgcc_s_seh-1.dll，请手动复制到输出目录")
+        endif()
+        
+        if(EXISTS "${MINGW_BIN_DIR}/libstdc++-6.dll")
+            add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${MINGW_BIN_DIR}/libstdc++-6.dll"
+                    $<TARGET_FILE_DIR:${PROJECT_NAME}>
+                    COMMENT "Copying libstdc++-6.dll..."
+            )
+        else()
+            message(WARNING "未找到 libstdc++-6.dll，请手动复制到输出目录")
+        endif()
+        
+        # 复制libwinpthread DLL（如果SFML依赖它）
+        if(EXISTS "${MINGW_BIN_DIR}/libwinpthread-1.dll")
+            add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${MINGW_BIN_DIR}/libwinpthread-1.dll"
+                    $<TARGET_FILE_DIR:${PROJECT_NAME}>
+                    COMMENT "Copying libwinpthread-1.dll..."
+            )
+        endif()
+        
+        message(STATUS "SDL2和SDL2_ttf使用静态链接，SFML使用动态链接（需要DLL和MinGW运行时）")
     else()
         message(WARNING "未找到SFML DLL目录，请手动复制SFML DLL到输出目录")
     endif()
