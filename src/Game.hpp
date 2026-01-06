@@ -68,6 +68,7 @@ private:
     void launchCurrentBird();
 
     sf::RenderWindow window_;
+    sf::View gameView_;  // 游戏视图（用于缩放和平移）
     sf::Font font_;
     sf::Texture backgroundTexture_;
     std::optional<sf::Sprite> backgroundSprite_;  // Will be set after texture is loaded
@@ -141,6 +142,15 @@ private:
     float skyTextureWidth_{0.0f};           // 天空贴图宽度（用于无限拼接）
     float menuCycleLCM_{0.0f};              // 地面和草贴图的最小公倍数周期（用于同步重置）
     
+    // 游戏开始时的缩放动画
+    bool zoomAnimationActive_{false};       // 缩放动画是否激活
+    float zoomAnimationTime_{0.0f};         // 缩放动画已进行的时间
+    float zoomAnimationDuration_{2.5f};     // 缩放动画持续时间（秒）
+    float startZoom_{1.0f};                 // 起始缩放比例
+    float targetZoom_{1.0f};                // 目标缩放比例
+    sf::Vector2f startViewCenter_{};        // 起始视图中心
+    sf::Vector2f targetViewCenter_{};       // 目标视图中心
+    
     // UI Buttons
     std::vector<std::unique_ptr<Button>> menuButtons_;
     std::vector<std::unique_ptr<Button>> gameButtons_;
@@ -186,5 +196,10 @@ private:
     // AI控制相关
     void updateAI(float dt);
     void handleAIControl(float dt);
+    
+    // 缩放动画相关
+    void calculateAndStartZoomAnimation();  // 计算并启动缩放动画
+    void updateZoomAnimation(float dt);     // 更新缩放动画
+    float easeInOutCubic(float t);          // 缓动函数（慢->快->慢）
 };
 

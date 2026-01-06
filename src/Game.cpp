@@ -29,6 +29,10 @@ Game::Game()
       physics_({0.f, config::kGravity}),
       scoreSystem_(font_),
       popups_(font_) {
+    // 初始化游戏视图
+    gameView_.setSize(sf::Vector2f(static_cast<float>(config::kWindowWidth), static_cast<float>(config::kWindowHeight)));
+    gameView_.setCenter(sf::Vector2f(config::kWindowWidth * 0.5f, config::kWindowHeight * 0.5f));
+    
     // 初始化日志系统
     Logger::getInstance().init("last_run.log");
     Logger::getInstance().info("游戏启动");
@@ -272,6 +276,11 @@ void Game::update(float dt) {
         case Scene::Playing: {
             gameTime_ += dt;
             
+            // 更新缩放动画
+            if (zoomAnimationActive_) {
+                updateZoomAnimation(dt);
+            }
+            
             // Update buttons first (to detect clicks before bird launching)
             updateButtons(dt);
             
@@ -382,7 +391,8 @@ void Game::update(float dt) {
                                 dragStart_ = body->position();
                             } else {
                                 sf::Vector2i pixelPos = sf::Mouse::getPosition(window_);
-                                dragStart_ = window_.mapPixelToCoords(pixelPos);
+                                // 使用游戏视图获取坐标（与渲染时使用的视图一致）
+                                dragStart_ = window_.mapPixelToCoords(pixelPos, gameView_);
                             }
                             
                             // Play bird select sound when bird is selected (dragging starts)
@@ -409,9 +419,10 @@ void Game::update(float dt) {
                             }
                             
                             if (birdStillValid) {
-                                // Update drag position
+                                // Update drag position (使用游戏视图，因为游戏内容是在游戏视图中渲染的)
                                 sf::Vector2i pixelPos = sf::Mouse::getPosition(window_);
-                                dragCurrent_ = window_.mapPixelToCoords(pixelPos);
+                                // 使用游戏视图获取坐标（与渲染时使用的视图一致）
+                                dragCurrent_ = window_.mapPixelToCoords(pixelPos, gameView_);
                                 
                                 // Release to launch
                                 if (!mouseDown && prevMouseDown_) {
@@ -444,7 +455,8 @@ void Game::update(float dt) {
                                 dragStart_ = body->position();
                             } else {
                                 sf::Vector2i pixelPos = sf::Mouse::getPosition(window_);
-                                dragStart_ = window_.mapPixelToCoords(pixelPos);
+                                // 使用游戏视图获取坐标（与渲染时使用的视图一致）
+                                dragStart_ = window_.mapPixelToCoords(pixelPos, gameView_);
                             }
                         }
                         break;
@@ -458,8 +470,13 @@ void Game::update(float dt) {
                 if (launchState_ == LaunchState::Dragging && draggingBird_ && !draggingBird_->isLaunched()) {
                     auto* birdBody = draggingBird_->body();
                     if (birdBody) {
+                        // 获取当前鼠标位置（使用游戏视图）
+                        sf::Vector2i pixelPos = sf::Mouse::getPosition(window_);
+                        // 使用游戏视图进行坐标转换
+                        sf::Vector2f dragCurrentInGameView = window_.mapPixelToCoords(pixelPos, gameView_);
+                        
                         // Calculate pull and initial velocity exactly as in launchCurrentBird()
-                        sf::Vector2f pull = dragStart_ - dragCurrent_;
+                        sf::Vector2f pull = dragStart_ - dragCurrentInGameView;
                         // 对于黄鸟，只在AI模式下允许2倍拉弓距离（手动模式下使用正常距离）
                         float maxPullDist = config::kMaxPullDistance;
                         if (draggingBird_->type() == BirdType::Yellow && aiModeEnabled_) {
@@ -674,51 +691,74 @@ void Game::render() {
             }
             break;
         case Scene::Playing: {
+            // 保存当前视图（原始视图）
+            sf::View originalView = window_.getView();
+            
+            // ========== 在原始视图下绘制UI元素（不受缩放影响） ==========
+            // 先绘制UI元素，这样它们不会被缩放和平移影响
+            renderHUD();
+            for (const auto& btn : gameButtons_) {
+                btn->draw(window_);
+            }
+            popups_.draw(window_);
+            
+            // ========== 现在应用游戏视图（缩放和平移） ==========
+            if (zoomAnimationActive_ || zoomAnimationTime_ > 0.0f) {
+                // 缩放动画进行中或已完成，使用游戏视图
+                window_.setView(gameView_);
+            }
+            
             // AI visual feedback will be drawn with trajectory preview below
             
             // Draw visible ground using ground.png - extend to cover full game world
+            // 在游戏视图坐标系中渲染完整的地面（包括地面以下100像素）
             {
                 const float groundLeft = -200.0f;
                 const float groundRight = 1600.0f;
-                const float groundWidth = groundRight - groundLeft;
-                const float groundHeight = 40.0f;  // 保持与原有高度一致
-                const float groundY = static_cast<float>(config::kWindowHeight) - 10.0f;  // 保持与原有位置一致
+                const float groundTextureHeight = 40.0f;  // 地面贴图高度
+                const float groundY = static_cast<float>(config::kWindowHeight) - 10.0f;  // 地面Y坐标（地面顶部）
+                const float maxGroundBelowPixels = 100.0f;  // 允许显示地面以下最多100像素
+                
+                // 获取地面贴图宽度，用于左右各加一张贴图
+                float groundTextureWidth = 0.0f;
+                if (groundTexture_.getSize().x > 0) {
+                    groundTextureWidth = static_cast<float>(groundTexture_.getSize().x);
+                }
+                
+                // 扩展地面宽度：左右各加一张贴图
+                const float extendedGroundWidth = (groundRight - groundLeft) + groundTextureWidth * 2.0f;
+                const float extendedGroundLeft = groundLeft - groundTextureWidth;
+                
+                // 扩展地面高度，确保覆盖地面以下100像素
+                // 注意：图片上部是地板顶部，所以需要向下扩展
+                const float extendedGroundHeight = groundTextureHeight + maxGroundBelowPixels;
                 
                 if (groundTexture_.getSize().x > 0) {
                     // 使用ground.png贴图
                     sf::Sprite groundSprite(groundTexture_);
-                    sf::Vector2u groundTexSize = groundTexture_.getSize();
-                    float texWidth = static_cast<float>(groundTexSize.x);
-                    float texHeight = static_cast<float>(groundTexSize.y);
                     
                     // 设置纹理为可重复模式
                     groundTexture_.setRepeated(true);
                     
-                    // 设置纹理矩形，使用实际地面尺寸（会自动重复）
+                    // 设置纹理矩形，扩展宽度（左右各加一张贴图）和高度（向下扩展100像素）
                     groundSprite.setTextureRect(sf::IntRect(
                         sf::Vector2i(0, 0),
-                        sf::Vector2i(static_cast<int>(groundWidth), static_cast<int>(groundHeight))
+                        sf::Vector2i(static_cast<int>(extendedGroundWidth), static_cast<int>(extendedGroundHeight))
                     ));
                     
-                    // 设置位置和原点
-                    groundSprite.setOrigin(sf::Vector2f(groundWidth * 0.5f, groundHeight * 0.5f));
-                    groundSprite.setPosition(
-                        {(groundLeft + groundRight) * 0.5f, groundY});
+                    // 设置位置：图片顶部对齐地面顶部
+                    // 原点在左上角（0, 0），位置设置为扩展后的左边界和地面顶部Y坐标
+                    groundSprite.setOrigin(sf::Vector2f(0.0f, 0.0f));
+                    groundSprite.setPosition(sf::Vector2f(extendedGroundLeft, groundY));
                     
                     window_.draw(groundSprite);
                 } else {
                     // 如果贴图加载失败，使用备用颜色块
-                    sf::RectangleShape groundShape({groundWidth, groundHeight});
-                    groundShape.setOrigin({groundWidth * 0.5f, groundHeight * 0.5f});
-                    groundShape.setPosition({(groundLeft + groundRight) * 0.5f, groundY});
+                    sf::RectangleShape groundShape({extendedGroundWidth, extendedGroundHeight});
+                    groundShape.setPosition({extendedGroundLeft, groundY});
                     groundShape.setFillColor(sf::Color(110, 180, 80));
                     window_.draw(groundShape);
                 }
-            }
-            
-            // Draw game buttons (restart, next level)
-            for (const auto& btn : gameButtons_) {
-                btn->draw(window_);
             }
 
             // Draw slingshot
@@ -749,19 +789,21 @@ void Game::render() {
             }
 
             if (launchState_ == LaunchState::Dragging && !birds_.empty()) {
+                // 获取当前鼠标位置（使用游戏视图，与渲染时一致）
                 sf::Vector2i pixelPos = sf::Mouse::getPosition(window_);
-                dragCurrent_ = window_.mapPixelToCoords(pixelPos);
+                dragCurrent_ = window_.mapPixelToCoords(pixelPos, gameView_);
                 sf::Vertex line[] = {sf::Vertex(dragStart_, sf::Color::Black),
                                      sf::Vertex(dragCurrent_, sf::Color::Black)};
                 window_.draw(line, 2, sf::PrimitiveType::Lines);
             }
-            renderHUD();
-            popups_.draw(window_);
             
             // Debug: Draw collision boxes if T key is pressed
             if (showDebugCollisionBoxes_) {
                 renderDebugCollisionBoxes();
             }
+            
+            // 恢复原始视图
+            window_.setView(originalView);
             break;
         }
         case Scene::Score:
@@ -793,42 +835,66 @@ void Game::render() {
             }
             break;
         }
-        case Scene::Paused:
+        case Scene::Paused: {
+            // 保存当前视图（原始视图）
+            sf::View originalView = window_.getView();
+            
+            // ========== 在原始视图下绘制UI元素（不受缩放影响） ==========
+            renderHUD();
+            
+            // ========== 现在应用游戏视图（缩放和平移） ==========
+            if (zoomAnimationActive_ || zoomAnimationTime_ > 0.0f) {
+                // 缩放动画进行中或已完成，使用游戏视图
+                window_.setView(gameView_);
+            }
+            
             // Draw the game scene in the background (frozen)
             // Draw visible ground using ground.png - extend to cover full game world
+            // 在游戏视图坐标系中渲染完整的地面（包括地面以下100像素）
             {
                 const float groundLeft = -200.0f;
                 const float groundRight = 1600.0f;
-                const float groundWidth = groundRight - groundLeft;
-                const float groundHeight = 40.0f;  // 保持与原有高度一致
-                const float groundY = static_cast<float>(config::kWindowHeight) - 10.0f;  // 保持与原有位置一致
+                const float groundTextureHeight = 40.0f;  // 地面贴图高度
+                const float groundY = static_cast<float>(config::kWindowHeight) - 10.0f;  // 地面Y坐标（地面顶部）
+                const float maxGroundBelowPixels = 100.0f;  // 允许显示地面以下最多100像素
+                
+                // 获取地面贴图宽度，用于左右各加一张贴图
+                float groundTextureWidth = 0.0f;
+                if (groundTexture_.getSize().x > 0) {
+                    groundTextureWidth = static_cast<float>(groundTexture_.getSize().x);
+                }
+                
+                // 扩展地面宽度：左右各加一张贴图
+                const float extendedGroundWidth = (groundRight - groundLeft) + groundTextureWidth * 2.0f;
+                const float extendedGroundLeft = groundLeft - groundTextureWidth;
+                
+                // 扩展地面高度，确保覆盖地面以下100像素
+                // 注意：图片上部是地板顶部，所以需要向下扩展
+                const float extendedGroundHeight = groundTextureHeight + maxGroundBelowPixels;
                 
                 if (groundTexture_.getSize().x > 0) {
                     // 使用ground.png贴图
                     sf::Sprite groundSprite(groundTexture_);
-                    sf::Vector2u groundTexSize = groundTexture_.getSize();
-                    float texWidth = static_cast<float>(groundTexSize.x);
-                    float texHeight = static_cast<float>(groundTexSize.y);
                     
                     // 设置纹理为可重复模式
                     groundTexture_.setRepeated(true);
                     
-                    // 设置纹理矩形，使用实际地面尺寸（会自动重复）
+                    // 设置纹理矩形，扩展宽度（左右各加一张贴图）和高度（向下扩展100像素）
                     groundSprite.setTextureRect(sf::IntRect(
                         sf::Vector2i(0, 0),
-                        sf::Vector2i(static_cast<int>(groundWidth), static_cast<int>(groundHeight))
+                        sf::Vector2i(static_cast<int>(extendedGroundWidth), static_cast<int>(extendedGroundHeight))
                     ));
                     
-                    // 设置位置和原点
-                    groundSprite.setOrigin(sf::Vector2f(groundWidth * 0.5f, groundHeight * 0.5f));
-                    groundSprite.setPosition({(groundLeft + groundRight) * 0.5f, groundY});
+                    // 设置位置：图片顶部对齐地面顶部
+                    // 原点在左上角（0, 0），位置设置为扩展后的左边界和地面顶部Y坐标
+                    groundSprite.setOrigin(sf::Vector2f(0.0f, 0.0f));
+                    groundSprite.setPosition(sf::Vector2f(extendedGroundLeft, groundY));
                     
                     window_.draw(groundSprite);
                 } else {
                     // 如果贴图加载失败，使用备用颜色块
-                    sf::RectangleShape groundShape({groundWidth, groundHeight});
-                    groundShape.setOrigin({groundWidth * 0.5f, groundHeight * 0.5f});
-                    groundShape.setPosition({(groundLeft + groundRight) * 0.5f, groundY});
+                    sf::RectangleShape groundShape({extendedGroundWidth, extendedGroundHeight});
+                    groundShape.setPosition({extendedGroundLeft, groundY});
                     groundShape.setFillColor(sf::Color(110, 180, 80));
                     window_.draw(groundShape);
                 }
@@ -844,9 +910,12 @@ void Game::render() {
             for (auto& p : pigs_) p->draw(window_);
             for (auto& b : birds_) b->draw(window_);
             
-            renderHUD();
+            // 恢复原始视图
+            window_.setView(originalView);
+            
             renderPauseMenu();
             break;
+        }
         case Scene::LevelEditor:
             if (levelEditor_) {
                 levelEditor_->render();
@@ -893,7 +962,7 @@ void Game::renderHUD() {
 void Game::renderScoreScreen() {
     std::string scoreText = "关卡完成！分数: " + std::to_string(scoreSystem_.score());
     sf::Text t(font_, sf::String::fromUtf8(scoreText.begin(), scoreText.end()), 32);
-    t.setFillColor(sf::Color::Green);
+    t.setFillColor(sf::Color::Yellow);
     t.setStyle(sf::Text::Bold);
     // Center text
     t.setPosition(sf::Vector2f(config::kWindowWidth * 0.5f, 300.f));
@@ -1170,6 +1239,9 @@ void Game::loadLevel(int index) {
     }
 
     scoreSystem_.resetRound();
+    
+    // 计算并启动缩放动画，确保能看到左边的鸟和右边的猪
+    calculateAndStartZoomAnimation();
 }
 
 void Game::resetCurrent() { loadLevel(levelIndex_); }
@@ -1973,5 +2045,230 @@ void Game::handleAIControl(float dt) {
             }
         }
     }
+}
+
+// ===================== 缩放动画 =====================
+
+float Game::easeInOutCubic(float t) {
+    // 缓动函数：慢->快->慢（ease-in-out cubic）
+    // t的范围是[0, 1]
+    if (t < 0.5f) {
+        return 4.0f * t * t * t;  // 前半段：加速
+    } else {
+        float f = 2.0f * t - 2.0f;
+        return 1.0f + f * f * f * 0.5f;  // 后半段：减速
+    }
+}
+
+void Game::calculateAndStartZoomAnimation() {
+    // 计算合适的缩放比例和位置，确保能看到左边的鸟和右边的猪
+    if (birds_.empty() || pigs_.empty()) {
+        // 如果没有鸟或猪，不进行缩放动画
+        zoomAnimationActive_ = false;
+        return;
+    }
+    
+    // 找到最左边的鸟（通常在弹弓位置）
+    float leftMostX = slingshotPos_.x;
+    for (const auto& bird : birds_) {
+        if (auto* body = bird->body()) {
+            float birdX = body->position().x;
+            // 鸟的半径约为14像素，考虑进去
+            float birdLeft = birdX - 14.0f;
+            if (birdLeft < leftMostX) {
+                leftMostX = birdLeft;
+            }
+        }
+    }
+    
+    // 找到最右边的猪
+    float rightMostX = 0.0f;
+    float maxY = 0.0f;
+    float minY = static_cast<float>(config::kWindowHeight);
+    
+    for (const auto& pig : pigs_) {
+        sf::Vector2f pos = pig->position();
+        // 猪的半径约为16-26像素，使用最大半径
+        float pigRight = pos.x + 26.0f;
+        float pigTop = pos.y - 26.0f;
+        float pigBottom = pos.y + 26.0f;
+        if (pigRight > rightMostX) {
+            rightMostX = pigRight;
+        }
+        if (pigBottom > maxY) {
+            maxY = pigBottom;
+        }
+        if (pigTop < minY) {
+            minY = pigTop;
+        }
+    }
+    
+    // 也检查方块的位置（使用关卡数据中的实际大小）
+    for (size_t i = 0; i < blocks_.size() && i < currentLevel_.blocks.size(); ++i) {
+        sf::Vector2f pos = blocks_[i]->position();
+        sf::Vector2f blockSize = currentLevel_.blocks[i].size;
+        // 计算方块的边界
+        float blockRight = pos.x + blockSize.x * 0.5f;
+        float blockTop = pos.y - blockSize.y * 0.5f;
+        float blockBottom = pos.y + blockSize.y * 0.5f;
+        if (blockRight > rightMostX) {
+            rightMostX = blockRight;
+        }
+        if (blockBottom > maxY) {
+            maxY = blockBottom;
+        }
+        if (blockTop < minY) {
+            minY = blockTop;
+        }
+    }
+    
+    // 如果blocks数量不匹配，使用估计值处理剩余的blocks
+    for (size_t i = currentLevel_.blocks.size(); i < blocks_.size(); ++i) {
+        sf::Vector2f pos = blocks_[i]->position();
+        // 使用估计值
+        float blockRight = pos.x + 30.0f;
+        float blockTop = pos.y - 30.0f;
+        float blockBottom = pos.y + 30.0f;
+        if (blockRight > rightMostX) {
+            rightMostX = blockRight;
+        }
+        if (blockBottom > maxY) {
+            maxY = blockBottom;
+        }
+        if (blockTop < minY) {
+            minY = blockTop;
+        }
+    }
+    
+    // 添加最小边距（进一步减小边距以充分利用空间）
+    const float marginX = 30.0f;  // 左右边距（进一步减小）
+    const float marginY = 30.0f;  // 上下边距（进一步减小）
+    
+    float contentWidth = (rightMostX - leftMostX) + marginX * 2.0f;
+    float contentHeight = (maxY - minY) + marginY * 2.0f;
+    
+    // 计算需要的缩放比例
+    float windowWidth = static_cast<float>(config::kWindowWidth);
+    float windowHeight = static_cast<float>(config::kWindowHeight);
+    
+    float scaleX = windowWidth / contentWidth;
+    float scaleY = windowHeight / contentHeight;
+    
+    // 选择缩放比例策略
+    // scaleX/scaleY > 1.0 表示内容比窗口小，需要放大（使用较小的scale值）
+    // scaleX/scaleY < 1.0 表示内容比窗口大，需要缩小（使用较小的scale值）
+    // 我们需要选择min(scaleX, scaleY)来确保内容完全显示在窗口内
+    float targetScale = std::min(scaleX, scaleY);
+    
+    // 但是，为了最小化左右留白，优先使用水平缩放
+    // 如果水平缩放会导致垂直方向超出，则使用垂直缩放
+    if (scaleX < 1.0f && scaleY < 1.0f) {
+        // 两边都需要缩小，优先使用水平缩放以最小化左右留白
+        targetScale = scaleX;
+    } else if (scaleX < 1.0f) {
+        // 只有水平需要缩小
+        targetScale = scaleX;
+    } else if (scaleY < 1.0f) {
+        // 只有垂直需要缩小
+        targetScale = scaleY;
+    } else {
+        // 两边都需要放大（内容小于窗口），使用较小的值以确保完全显示
+        targetScale = std::min(scaleX, scaleY);
+    }
+    
+    // 最终限制缩放范围（不要缩得太小，但允许放大）
+    targetScale = std::max(0.3f, std::min(2.0f, targetScale));
+    
+    // 计算视图中心（鸟和猪的中心点）
+    float centerX = (leftMostX + rightMostX) * 0.5f;
+    float centerY = (minY + maxY) * 0.5f;
+    
+    // 限制视图中心，允许显示地面以下最多100像素
+    // 地面位置大约在窗口底部，计算缩放后的可见区域高度
+    float groundY = static_cast<float>(config::kWindowHeight) - 10.0f;  // 地面Y坐标
+    float viewHeightAtScale = windowHeight / targetScale;  // 缩放后的视图高度
+    const float maxGroundBelowPixels = 100.0f;  // 允许显示地面以下最多100像素
+    float maxCenterY = groundY + maxGroundBelowPixels - viewHeightAtScale * 0.5f;  // 视图中心的最大Y值（允许显示地面以下最多100像素）
+    
+    // 如果使用水平缩放导致垂直方向内容无法完全显示，允许向上移动视图利用天空空间
+    // 计算内容需要的高度
+    float requiredViewHeight = contentHeight;
+    float actualViewHeight = viewHeightAtScale;
+    
+    // 如果实际视图高度小于需要的高度，调整视图中心向上（利用天空）
+    if (actualViewHeight < requiredViewHeight) {
+        // 允许视图向上移动，利用天空空间，同时允许显示地面以下最多100像素
+        float idealCenterY = (minY + maxY) * 0.5f;
+        float minCenterYForContent = idealCenterY - (requiredViewHeight - actualViewHeight) * 0.5f;
+        float maxCenterYForGround = maxCenterY;
+        
+        // 在保证不超过地面以下100像素的前提下，尽可能向上移动以显示内容
+        centerY = std::min(minCenterYForContent, maxCenterYForGround);
+    } else {
+        // 如果实际视图高度足够，只需确保不超过地面以下100像素
+        if (centerY > maxCenterY) {
+            centerY = maxCenterY;
+        }
+    }
+    
+    // 确保视图中心不会太高（至少显示一些内容）
+    float minCenterY = viewHeightAtScale * 0.5f;  // 视图中心的最小Y值
+    if (centerY < minCenterY) {
+        centerY = minCenterY;
+    }
+    
+    // 设置动画参数
+    startZoom_ = 1.0f;  // 从正常大小开始
+    targetZoom_ = targetScale;
+    startViewCenter_ = sf::Vector2f(windowWidth * 0.5f, windowHeight * 0.5f);  // 从窗口中心开始
+    targetViewCenter_ = sf::Vector2f(centerX, centerY);
+    
+    zoomAnimationTime_ = 0.0f;
+    zoomAnimationActive_ = true;
+    
+    Logger::getInstance().info("启动缩放动画: 从 " + std::to_string(startZoom_) + 
+                               " 到 " + std::to_string(targetZoom_) +
+                               ", scaleX=" + std::to_string(scaleX) +
+                               ", scaleY=" + std::to_string(scaleY) +
+                               ", contentWidth=" + std::to_string(contentWidth) +
+                               ", contentHeight=" + std::to_string(contentHeight) +
+                               ", centerX=" + std::to_string(centerX) +
+                               ", centerY=" + std::to_string(centerY));
+}
+
+void Game::updateZoomAnimation(float dt) {
+    if (!zoomAnimationActive_) {
+        return;
+    }
+    
+    zoomAnimationTime_ += dt;
+    
+    // 计算动画进度（0.0 到 1.0）
+    float progress = zoomAnimationTime_ / zoomAnimationDuration_;
+    
+    if (progress >= 1.0f) {
+        // 动画完成
+        progress = 1.0f;
+        zoomAnimationActive_ = false;
+    }
+    
+    // 应用缓动函数（慢->快->慢）
+    float easedProgress = easeInOutCubic(progress);
+    
+    // 插值计算当前的缩放和位置
+    float currentZoom = startZoom_ + (targetZoom_ - startZoom_) * easedProgress;
+    sf::Vector2f currentCenter(
+        startViewCenter_.x + (targetViewCenter_.x - startViewCenter_.x) * easedProgress,
+        startViewCenter_.y + (targetViewCenter_.y - startViewCenter_.y) * easedProgress
+    );
+    
+    // 更新视图
+    // 缩放值越小，视图尺寸越大（能看到更多内容）
+    // currentZoom = 1.0 表示正常大小，< 1.0 表示缩小（视图尺寸增大），> 1.0 表示放大（视图尺寸减小）
+    float windowWidth = static_cast<float>(config::kWindowWidth);
+    float windowHeight = static_cast<float>(config::kWindowHeight);
+    sf::Vector2f viewSize(windowWidth / currentZoom, windowHeight / currentZoom);
+    gameView_.setSize(viewSize);
+    gameView_.setCenter(currentCenter);
 }
 
